@@ -1,16 +1,60 @@
-# React + Vite
+# Monitoring Tools Workspace
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This repository is now organized as a full-stack workspace with a clear separation between the React frontend and a future Node.js/Express backend.
 
-Currently, two official plugins are available:
+## Structure
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+```text
+monitoring-tools/
+├── backend/
+│   ├── package.json
+│   ├── .env.example
+│   └── src/
+│       ├── app.js
+│       ├── server.js
+│       ├── config/
+│       ├── controllers/
+│       ├── middleware/
+│       └── routes/
+├── frontend/
+│   ├── package.json
+│   ├── package-lock.json
+│   ├── index.html
+│   ├── vite.config.js
+│   ├── eslint.config.js
+│   ├── public/
+│   └── src/
+├── .gitignore
+└── package.json
+```
 
-## React Compiler
+## Frontend
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+The existing Vite + React application was preserved and placed under `frontend/` so its files stay intact while being separated from backend work.
 
-## Expanding the ESLint configuration
+Useful commands:
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+```bash
+npm run dev:frontend
+npm run build:frontend
+npm run lint:frontend
+```
+
+## Backend
+
+`backend/` contains a starter Express structure for future API work.
+
+Useful commands:
+
+```bash
+npm run dev:backend
+npm run start:backend
+```
+
+Before running the backend for the first time, install its dependencies inside `backend/`.
+
+## Notes
+
+- The root `package.json` is now a workspace-style entry point for the whole project.
+- Frontend and backend are separated so future API development will not mix with UI files.
+- The backend currently includes a health-check route to give the server scaffold a clean starting point.
