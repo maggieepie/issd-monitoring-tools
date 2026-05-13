@@ -1,12 +1,16 @@
 import { app } from "./app.js";
 import { env } from "./config/env.js";
+import { ensureMonitoringProjectsTable } from "./db/ensureMonitoringSchema.js";
 import { closeOraclePool, initOraclePool } from "./db/oraclePool.js";
 
 async function start() {
   try {
     await initOraclePool();
+    if (env.oracle.enabled) {
+      await ensureMonitoringProjectsTable();
+    }
   } catch (err) {
-    console.error("Oracle: failed to start connection pool", err);
+    console.error("Oracle: startup failed", err);
     if (env.oracle.enabled) {
       process.exit(1);
     }

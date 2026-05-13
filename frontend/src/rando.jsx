@@ -134,7 +134,7 @@ function App() {
   const [landingModal, setLandingModal] = useState(null);
   const [activeFaq, setActiveFaq] = useState(FAQ_ITEMS[0].id);
   const [theme, setTheme] = useState(() => localStorage.getItem("monitoring-theme") || "light");
-  const [dense, setDense] = useState(() => localStorage.getItem("monitoring-density") === "dense");
+  const [dense] = useState(() => localStorage.getItem("monitoring-density") === "dense");
   const [projects, setProjects] = useState(seedProjects);
   const [payments, setPayments] = useState(seedPayments);
   const [outgoing, setOutgoing] = useState(seedOutgoing);
@@ -180,15 +180,7 @@ function App() {
     };
   }, [projects, payments, outgoing]);
 
-  const projectBars = useMemo(() => tally(projects, "goods"), [projects]);
-  const paymentBars = useMemo(() => {
-    const counts = { Signed: 0, Receive: 0, Received: 0, Pending: 0, Unsigned: 0, Return: 0 };
-    payments.forEach((x) => [x.ictssd, x.gad, x.cash].forEach((s) => { counts[s] += 1; }));
-    return Object.entries(counts).filter(([, v]) => v).map(([label, value]) => ({ label, value }));
-  }, [payments]);
   const outgoingBars = useMemo(() => tally(outgoing, "forDept").sort((a, b) => b.value - a.value).slice(0, 6), [outgoing]);
-  const maxBar = Math.max(1, ...projectBars.map((x) => x.value), ...paymentBars.map((x) => x.value), ...outgoingBars.map((x) => x.value));
-
   const projectRows = useMemo(() => {
     const q = projectSearch.toLowerCase().trim();
     return projects.filter((x) => (!q || `${x.contractName} ${x.goods} ${x.duration}`.toLowerCase().includes(q)) && (projectFilter === "All Goods" || x.goods === projectFilter));
@@ -208,8 +200,6 @@ function App() {
   const safeProjectPage = Math.min(projectPage, projectPages);
   const safePaymentPage = Math.min(paymentPage, paymentPages);
   const safeOutgoingPage = Math.min(outgoingPage, outgoingPages);
-
-  const activity = [...projects.map((x) => ({ id: `p-${x.id}`, type: "Project", title: x.contractName, date: x.date, detail: `Outstanding ${peso.format(x.outstanding)}` })), ...payments.map((x) => ({ id: `d-${x.id}`, type: "DV Payment", title: x.voucherNo, date: `2026-04-${String((x.id % 8) + 1).padStart(2, "0")}`, detail: `${x.claimantAddress} - ${peso.format(x.amount)}` })), ...outgoing.map((x) => ({ id: `o-${x.id}`, type: "Outgoing", title: x.memoNo, date: x.date, detail: `${x.thru} to ${x.forDept}` }))].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6);
 
   const saveProject = (e) => {
     e.preventDefault();

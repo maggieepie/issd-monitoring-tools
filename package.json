@@ -13,7 +13,8 @@
     "lint:frontend": "npm --prefix frontend run lint",
     "preview:frontend": "npm --prefix frontend run preview",
     "dev:backend": "npm --prefix backend run dev",
-    "start:backend": "npm --prefix backend run start"
+    "start:backend": "npm --prefix backend run start",
+    "verify:db": "npm --prefix backend run verify:db"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

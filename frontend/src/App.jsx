@@ -9,6 +9,22 @@ const NAV = [
   { id: "outgoing", label: "Outgoing Document Monitoring", icon: "outgoing" },
   { id: "reports", label: "Reports and Analytics", icon: "reports" },
 ];
+const WORKSPACE_SESSION_KEY = "monitoring-workspace-session";
+
+function readWorkspaceSession() {
+  try {
+    const raw = localStorage.getItem(WORKSPACE_SESSION_KEY);
+    if (!raw) return { entered: false, view: "projects" };
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return { entered: false, view: "projects" };
+    const entered = Boolean(parsed.entered);
+    const v = typeof parsed.view === "string" && NAV.some((n) => n.id === parsed.view) ? parsed.view : "projects";
+    return { entered, view: v };
+  } catch {
+    return { entered: false, view: "projects" };
+  }
+}
+
 const VIEW_META = {
   projects: {
     title: "Project Monitoring",
@@ -27,7 +43,69 @@ const VIEW_META = {
     subtext: "Review operational summaries and export monitoring data for each workspace tool.",
   },
 };
-const GOODS = ["All Goods", "ICT Equipment", "Software", "Office Equipment", "Services"];
+const GOODS_STORAGE_KEY = "monitoring-extra-goods";
+const GOODS_PICKER_HIDDEN_KEY = "monitoring-goods-picker-hidden";
+const BASE_GOODS = ["ICT Equipment", "Software", "Office Equipment", "Services"];
+
+function readExtraGoods() {
+  try {
+    const raw = localStorage.getItem(GOODS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((x) => typeof x === "string" && String(x).trim()).map((x) => String(x).trim());
+  } catch {
+    return [];
+  }
+}
+
+function readHiddenPickerGoods() {
+  try {
+    const raw = localStorage.getItem(GOODS_PICKER_HIDDEN_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((x) => typeof x === "string" && String(x).trim()).map((x) => String(x).trim());
+  } catch {
+    return [];
+  }
+}
+
+/** Keeps the native date picker chrome; `readOnly` on type="date" hides the calendar control in Chromium. */
+function blockDateFieldDirectEntry(e) {
+  if (e.key === "Tab" || e.key === "Escape" || e.key === "Enter") return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.nativeEvent?.isComposing) return;
+  if (e.key.length === 1) e.preventDefault();
+  if (e.key === "Backspace" || e.key === "Delete") e.preventDefault();
+  if (e.key === "ArrowUp" || e.key === "ArrowDown") e.preventDefault();
+}
+
+/** Base order (minus unused hidden labels), then user-added kinds, then any kinds from loaded projects (deduped case-insensitively). */
+function mergeGoodsOptions(extraGoods, projects, hiddenPickerGoods) {
+  const hidden = new Set((hiddenPickerGoods ?? []).map((x) => String(x).toLowerCase()));
+  const seen = new Set();
+  const out = [];
+  const push = (g) => {
+    const t = String(g ?? "").trim();
+    if (!t) return;
+    const k = t.toLowerCase();
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push(t);
+  };
+  BASE_GOODS.forEach((g) => {
+    const t = String(g ?? "").trim();
+    if (!t) return;
+    const k = t.toLowerCase();
+    const stillUsed = projects.some((p) => String(p.goods ?? "").trim().toLowerCase() === k);
+    if (hidden.has(k) && !stillUsed) return;
+    push(t);
+  });
+  extraGoods.forEach(push);
+  for (const p of projects) push(p.goods);
+  return out;
+}
 const ICTSSD = ["Signed", "Receive", "Pending"];
 const GAD = ["Pending", "Signed", "Unsigned", "Return"];
 const CASH = ["Received", "Return"];
@@ -35,23 +113,14 @@ const PAYMENT_FILTERS = ["All", "Signed", "Receive", "Received", "Pending", "Uns
 const THRU = ["NCD", "ITMG", "BAC", "PMO", "PSD", "PCEO"];
 const FOR = ["SSC", "PCEO", "NCD", "ITMG", "BAC", "PMO", "PSD", "PPMD", "BUDGET", "LEGAL", "ESD", "OPSD", "PMERD", "LDD"];
 
-const seedProjects = [
-  { id: 1, contractName: "Supply and Delivery of ICT Equipment", date: "2026-03-15", duration: "120 days", goods: "ICT Equipment", amount: 131123123, outstanding: 22000000 },
-  { id: 2, contractName: "Document Management Platform Upgrade", date: "2026-02-10", duration: "180 days", goods: "Software", amount: 18500000, outstanding: 6150000 },
-  { id: 3, contractName: "Regional Office Network Enhancement", date: "2026-01-24", duration: "90 days", goods: "Services", amount: 9800000, outstanding: 2500000 },
-];
-const seedPayments = [
-  { id: 11, title: "Network Upgrade Project", claimantAddress: "Juan Dela Cruz, Quezon City", voucherNo: "KM-3313", amount: 245000, ictssd: "Signed", gad: "Pending", cash: "Received" },
-  { id: 12, title: "Server Room Improvement", claimantAddress: "Maria Santos, Pasig City", voucherNo: "KM-3314", amount: 825000, ictssd: "Receive", gad: "Signed", cash: "Return" },
-  { id: 13, title: "Cybersecurity Hardening", claimantAddress: "Carlos Reyes, Manila City", voucherNo: "KM-3315", amount: 450000, ictssd: "Pending", gad: "Unsigned", cash: "Received" },
-];
-const seedOutgoing = [
-  { id: 21, subject: "Submission of Procurement Plan", memoNo: "ISSD-2026-014", date: "2026-03-18", thru: "BAC", forDept: "BUDGET" },
-  { id: 22, subject: "Request for Technical Evaluation", memoNo: "ISSD-2026-019", date: "2026-03-21", thru: "ITMG", forDept: "LEGAL" },
-  { id: 23, subject: "Endorsement of Project Timeline", memoNo: "ISSD-2026-024", date: "2026-03-27", thru: "PMO", forDept: "PCEO" },
-];
+const MAX_PROJECT_CONTRACT_NAME_LENGTH = 50;
+
 const blankProject = { contractName: "", date: "", duration: "", goods: "ICT Equipment", amount: "", outstanding: "" };
-const blankPayment = { title: "", claimantAddress: "", voucherNo: "", amount: "", ictssd: "Pending", gad: "Pending", cash: "Received" };
+const blankProjectMoneyWarnings = {
+  amount: { invalidChars: false, maxDigits: false },
+  outstanding: { invalidChars: false, maxDigits: false },
+};
+const blankPayment = { title: "", claimantAddress: "", voucherNo: "", amount: "", date: "", ictssd: "Pending", gad: "Pending", cash: "Received" };
 const blankOutgoing = { subject: "", memoNo: "", date: "", thru: "BAC", forDept: "SSC" };
 const LANDING_BUILDING_IMAGE = "/sss-building.jpg";
 const LANDING_LOGO_IMAGE = "https://www.sss.gov.ph/wp-content/uploads/2024/09/SSS-favicon.png";
@@ -131,17 +200,180 @@ function exportCsv(name, rows) {
   a.href = url; a.download = name; a.click(); URL.revokeObjectURL(url);
 }
 
+/** Max digits (integer + fractional combined) for project amount / outstanding fields */
+const MAX_PROJECT_MONEY_DIGITS = 30;
+
+/** Allowed in the field: digits, thousands commas, and a single decimal period (others stripped). */
+const PROJECT_MONEY_ALLOWED = /[^\d.,]/g;
+/** Same character class without `g` — safe for `.test()` */
+const PROJECT_MONEY_DISALLOWED = /[^\d.,]/;
+
+function stripMoneyGrouping(value) {
+  return String(value ?? "").replace(/,/g, "");
+}
+
+function projectMoneyDisplayToNumber(display) {
+  const s = stripMoneyGrouping(String(display ?? "").replace(PROJECT_MONEY_ALLOWED, "")).trim();
+  if (!s || s === ".") return 0;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** @returns {{ display: string, hadInvalidChars: boolean, digitLimitExceeded: boolean }} */
+function projectMoneyParseState(rawInput) {
+  const raw = String(rawInput ?? "");
+  const hadInvalidChars = PROJECT_MONEY_DISALLOWED.test(raw);
+  const allowedOnly = raw.replace(PROJECT_MONEY_ALLOWED, "");
+  let s = stripMoneyGrouping(allowedOnly).replace(/[^\d.]/g, "");
+  const dot = s.indexOf(".");
+  let intD = dot === -1 ? s.replace(/\./g, "") : s.slice(0, dot).replace(/\D/g, "");
+  let fracD = dot === -1 ? "" : s.slice(dot + 1).replace(/\D/g, "");
+  const digitCountBeforeCap = intD.length + fracD.length;
+  const digitLimitExceeded = digitCountBeforeCap > MAX_PROJECT_MONEY_DIGITS;
+  if (digitCountBeforeCap > MAX_PROJECT_MONEY_DIGITS) {
+    if (intD.length >= MAX_PROJECT_MONEY_DIGITS) {
+      intD = intD.slice(0, MAX_PROJECT_MONEY_DIGITS);
+      fracD = "";
+    } else {
+      fracD = fracD.slice(0, MAX_PROJECT_MONEY_DIGITS - intD.length);
+    }
+  }
+  const trailingDot = dot !== -1 && fracD.length === 0 && s.endsWith(".");
+  if (intD.length > 1) intD = intD.replace(/^0+/, "") || "0";
+  const intNum = intD;
+  const withCommas = intNum === "" ? "" : intNum.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  let display;
+  if (trailingDot) {
+    display = withCommas === "" ? "0." : `${withCommas}.`;
+  } else if (fracD) {
+    const left = withCommas === "" ? "0" : withCommas;
+    display = `${left}.${fracD}`;
+  } else {
+    display = withCommas;
+  }
+  return { display, hadInvalidChars, digitLimitExceeded };
+}
+
+function formatProjectMoneyInput(rawInput) {
+  return projectMoneyParseState(rawInput).display;
+}
+
+function projectMoneyFromNumber(n) {
+  if (!Number.isFinite(n) || n === 0) return "";
+  return formatProjectMoneyInput(String(n));
+}
+
+/**
+ * Parses duration text into an amount and unit: day, week, month, or year.
+ * Examples: "120 days", "12 wks", "6 months", "1 year", "3 mo", "90-day", bare "90" → days.
+ */
+function parseProjectDuration(durationStr) {
+  const raw = String(durationStr ?? "").trim();
+  if (!raw) return null;
+  const lower = raw.toLowerCase();
+  const numMatch = lower.match(/(\d+(?:\.\d+)?)/);
+  if (!numMatch) return null;
+  const n = Number(numMatch[1]);
+  if (!Number.isFinite(n) || n < 0) return null;
+
+  const afterNum = lower.slice(lower.indexOf(numMatch[1]) + numMatch[1].length).trim();
+  const tail = afterNum.replace(/^[\s\-–—]+/, "");
+
+  /** Prefer explicit text after the number; else scan the whole string for keywords. */
+  let unit = "day";
+  const pickFromTail = () => {
+    if (/^(year|years|yrs)\b/.test(tail) || /^yr\b/.test(tail) || /^y\b/.test(tail)) return "year";
+    if (/^(month|months)\b/.test(tail) || /^mos\b/.test(tail) || /^mo\b/.test(tail) || /^m\b/.test(tail)) return "month";
+    if (/^(week|weeks)\b/.test(tail) || /^wks\b/.test(tail) || /^wk\b/.test(tail) || /^w\b/.test(tail)) return "week";
+    if (/^(day|days)\b/.test(tail) || /^d\b/.test(tail)) return "day";
+    return null;
+  };
+
+  const fromTail = pickFromTail();
+  if (fromTail) unit = fromTail;
+  else if (/^\d+(?:\.\d+)?\s*$/.test(lower)) unit = "day";
+  else if (/\b(year|years|yrs)\b/.test(lower) || /\byr\b/.test(lower)) unit = "year";
+  else if (/\b(month|months|mos)\b/.test(lower) || /\bmo\b/.test(lower)) unit = "month";
+  else if (/\b(week|weeks)\b/.test(lower) || /\bwks\b/.test(lower) || /\bwk\b/.test(lower)) unit = "week";
+  else if (/\b(day|days)\b/.test(lower)) unit = "day";
+
+  const amount =
+    unit === "day" || unit === "week"
+      ? Math.round(n * 100) / 100
+      : Math.round(n);
+
+  return { amount, unit };
+}
+
+function ymdFromLocalDate(dt) {
+  const yy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
+}
+
+/** Apply parsed duration to a local-calendar start date (YYYY-MM-DD). */
+function addDurationToYmd(startYmd, parsed) {
+  if (!startYmd || !parsed || !Number.isFinite(parsed.amount)) return "";
+  const parts = startYmd.split("-");
+  if (parts.length !== 3) return "";
+  const y = Number(parts[0]);
+  const mo = Number(parts[1]);
+  const d = Number(parts[2]);
+  if (![y, mo, d].every((x) => Number.isFinite(x))) return "";
+  const dt = new Date(y, mo - 1, d);
+  switch (parsed.unit) {
+    case "day":
+      dt.setDate(dt.getDate() + Math.round(parsed.amount));
+      break;
+    case "week":
+      dt.setDate(dt.getDate() + Math.round(parsed.amount * 7));
+      break;
+    case "month":
+      dt.setMonth(dt.getMonth() + parsed.amount);
+      break;
+    case "year":
+      dt.setFullYear(dt.getFullYear() + parsed.amount);
+      break;
+    default:
+      return "";
+  }
+  return ymdFromLocalDate(dt);
+}
+
+/** End date (YYYY-MM-DD) = start date + duration (days, weeks, months, or years). */
+function projectComputedEndDateYmd(startYmd, durationStr) {
+  const parsed = parseProjectDuration(durationStr);
+  if (!parsed || !startYmd) return "";
+  return addDurationToYmd(startYmd, parsed);
+}
+
+function formatProjectEndDateLabel(dateStr, durationStr) {
+  const ymd = projectComputedEndDateYmd(dateStr, durationStr);
+  return ymd ? fmtDate(ymd) : "—";
+}
+
 function App() {
-  const [started, setStarted] = useState(false);
-  const [view, setView] = useState("projects");
+  const [started, setStarted] = useState(() => readWorkspaceSession().entered);
+  const [view, setView] = useState(() => readWorkspaceSession().view);
   const [landingModal, setLandingModal] = useState(null);
   const [activeFaq, setActiveFaq] = useState(FAQ_ITEMS[0].id);
   const [theme, setTheme] = useState(() => localStorage.getItem("monitoring-theme") || "light");
-  const [dense, setDense] = useState(() => localStorage.getItem("monitoring-density") === "dense");
-  const [projects, setProjects] = useState(seedProjects);
-  const [payments, setPayments] = useState(seedPayments);
-  const [outgoing, setOutgoing] = useState(seedOutgoing);
+  const [dense] = useState(() => localStorage.getItem("monitoring-density") === "dense");
+  const [projects, setProjects] = useState([]);
+  const [payments, setPayments] = useState([]);
+  const [outgoing, setOutgoing] = useState([]);
   const [projectForm, setProjectForm] = useState(blankProject);
+  const [projectMoneyWarnings, setProjectMoneyWarnings] = useState(blankProjectMoneyWarnings);
+  const [extraGoods, setExtraGoods] = useState(readExtraGoods);
+  const [hiddenPickerGoods, setHiddenPickerGoods] = useState(readHiddenPickerGoods);
+  const [goodsAddVisible, setGoodsAddVisible] = useState(false);
+  const [goodsAddDraft, setGoodsAddDraft] = useState("");
+  const [goodsAddError, setGoodsAddError] = useState("");
+  const [goodsRenameVisible, setGoodsRenameVisible] = useState(false);
+  const [goodsRenameDraft, setGoodsRenameDraft] = useState("");
+  const [goodsRenameError, setGoodsRenameError] = useState("");
+  const [goodsSelectError, setGoodsSelectError] = useState("");
   const [paymentForm, setPaymentForm] = useState(blankPayment);
   const [outgoingForm, setOutgoingForm] = useState(blankOutgoing);
   const [projectEdit, setProjectEdit] = useState(null);
@@ -156,6 +388,10 @@ function App() {
   const [projectPage, setProjectPage] = useState(1);
   const [paymentPage, setPaymentPage] = useState(1);
   const [outgoingPage, setOutgoingPage] = useState(1);
+  const [projectsLoading, setProjectsLoading] = useState(false);
+  const [projectLoadError, setProjectLoadError] = useState("");
+  const [projectSaveError, setProjectSaveError] = useState("");
+  const [projectSaving, setProjectSaving] = useState(false);
   const [reportExport, setReportExport] = useState("summary");
   const [modal, setModal] = useState(null);
   const currentViewMeta = VIEW_META[view];
@@ -166,6 +402,172 @@ function App() {
     localStorage.setItem("monitoring-theme", theme);
     localStorage.setItem("monitoring-density", dense ? "dense" : "comfortable");
   }, [theme, dense]);
+
+  useEffect(() => {
+    if (!started) {
+      try {
+        localStorage.removeItem(WORKSPACE_SESSION_KEY);
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    try {
+      localStorage.setItem(WORKSPACE_SESSION_KEY, JSON.stringify({ entered: true, view }));
+    } catch {
+      /* ignore */
+    }
+  }, [started, view]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(GOODS_STORAGE_KEY, JSON.stringify(extraGoods));
+    } catch {
+      /* ignore quota / private mode */
+    }
+  }, [extraGoods]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(GOODS_PICKER_HIDDEN_KEY, JSON.stringify(hiddenPickerGoods));
+    } catch {
+      /* ignore */
+    }
+  }, [hiddenPickerGoods]);
+
+  const goodsOptions = useMemo(() => mergeGoodsOptions(extraGoods, projects, hiddenPickerGoods), [extraGoods, projects, hiddenPickerGoods]);
+  const goodsFilterOptions = useMemo(() => ["All Goods", ...goodsOptions], [goodsOptions]);
+
+  const addGoodsCommit = () => {
+    const t = goodsAddDraft.trim();
+    if (!t) {
+      setGoodsAddError("Enter a name.");
+      return;
+    }
+    const lower = t.toLowerCase();
+    if (goodsOptions.some((g) => g.toLowerCase() === lower)) {
+      setGoodsAddError("That kind is already listed.");
+      return;
+    }
+    setExtraGoods((prev) => [...prev, t]);
+    setProjectForm((f) => ({ ...f, goods: t }));
+    setGoodsAddDraft("");
+    setGoodsAddVisible(false);
+    setGoodsAddError("");
+  };
+
+  const renameGoodsCommit = async () => {
+    const oldName = projectForm.goods;
+    const newName = goodsRenameDraft.trim();
+    if (!newName) {
+      setGoodsRenameError("Enter a name.");
+      return;
+    }
+    if (oldName === newName) {
+      setGoodsRenameVisible(false);
+      setGoodsRenameError("");
+      return;
+    }
+    const lower = newName.toLowerCase();
+    if (goodsOptions.some((g) => g !== oldName && g.toLowerCase() === lower)) {
+      setGoodsRenameError("That kind is already listed.");
+      return;
+    }
+    const affected = projects.filter((p) => p.goods === oldName);
+    setGoodsRenameError("");
+    setGoodsSelectError("");
+    try {
+      const replacements = new Map();
+      for (const p of affected) {
+        const body = {
+          contractName: String(p.contractName ?? "").trim().slice(0, MAX_PROJECT_CONTRACT_NAME_LENGTH),
+          date: String(p.date ?? "").trim(),
+          duration: String(p.duration ?? "").trim(),
+          goods: newName,
+          amount: Number(p.amount ?? 0),
+          outstanding: Number(p.outstanding ?? 0),
+        };
+        const res = await fetch(`/api/projects/${p.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const raw = await res.text();
+        let data;
+        try {
+          data = raw ? JSON.parse(raw) : null;
+        } catch {
+          data = null;
+        }
+        if (!res.ok) {
+          throw new Error((data && data.message) || raw || "Save failed");
+        }
+        replacements.set(p.id, data);
+      }
+      setProjects((cur) => cur.map((x) => replacements.get(x.id) ?? x));
+      setExtraGoods((prev) => {
+        if (!prev.some((x) => x === oldName)) return prev;
+        const next = prev.map((x) => (x === oldName ? newName : x));
+        const seen = new Set();
+        return next.filter((x) => {
+          const k = x.toLowerCase();
+          if (seen.has(k)) return false;
+          seen.add(k);
+          return true;
+        });
+      });
+      setProjectForm((f) => ({ ...f, goods: newName }));
+      if (projectFilter === oldName) setProjectFilter(newName);
+      if (BASE_GOODS.includes(oldName)) {
+        setHiddenPickerGoods((prev) => Array.from(new Set([...prev, oldName])));
+        if (affected.length === 0) {
+          setExtraGoods((prev) => (prev.some((x) => x.toLowerCase() === newName.toLowerCase()) ? prev : [...prev, newName]));
+        }
+      }
+      setGoodsRenameVisible(false);
+      setGoodsRenameDraft("");
+      setGoodsRenameError("");
+    } catch (e) {
+      setGoodsRenameError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const deleteGoodsKind = () => {
+    const name = projectForm.goods;
+    setGoodsSelectError("");
+    const used = projects.some((p) => p.goods === name);
+    const inExtra = extraGoods.some((x) => x === name);
+    const isBase = BASE_GOODS.includes(name);
+
+    if (used) {
+      setGoodsSelectError("This kind is still used by one or more projects. Edit or delete those records first.");
+      return;
+    }
+
+    if (isBase) {
+      if (!window.confirm(`Hide "${name}" from the kinds list? It will reappear if you save a project with this kind again.`)) return;
+      const nextHidden = Array.from(new Set([...hiddenPickerGoods, name]));
+      setHiddenPickerGoods(nextHidden);
+      const nextOpts = mergeGoodsOptions(extraGoods, projects, nextHidden);
+      const fallback = nextOpts[0] || BASE_GOODS[0];
+      setProjectForm((f) => ({ ...f, goods: f.goods === name ? fallback : f.goods }));
+      if (projectFilter === name) setProjectFilter("All Goods");
+      return;
+    }
+
+    if (!inExtra) {
+      setGoodsSelectError("Remove kinds you added with Add Goods, or hide an unused built-in with the trash icon.");
+      return;
+    }
+
+    if (!window.confirm(`Remove "${name}" from your added kinds?`)) return;
+    const nextExtra = extraGoods.filter((x) => x !== name);
+    const nextOpts = mergeGoodsOptions(nextExtra, projects, hiddenPickerGoods);
+    const fallback = nextOpts[0] || BASE_GOODS[0];
+    setExtraGoods(nextExtra);
+    setProjectForm((f) => ({ ...f, goods: f.goods === name ? fallback : f.goods }));
+    if (projectFilter === name) setProjectFilter("All Goods");
+  };
 
   const stats = useMemo(() => {
     const totalContractValue = projects.reduce((s, x) => s + x.amount, 0);
@@ -184,15 +586,7 @@ function App() {
     };
   }, [projects, payments, outgoing]);
 
-  const projectBars = useMemo(() => tally(projects, "goods"), [projects]);
-  const paymentBars = useMemo(() => {
-    const counts = { Signed: 0, Receive: 0, Received: 0, Pending: 0, Unsigned: 0, Return: 0 };
-    payments.forEach((x) => [x.ictssd, x.gad, x.cash].forEach((s) => { counts[s] += 1; }));
-    return Object.entries(counts).filter(([, v]) => v).map(([label, value]) => ({ label, value }));
-  }, [payments]);
   const outgoingBars = useMemo(() => tally(outgoing, "forDept").sort((a, b) => b.value - a.value).slice(0, 6), [outgoing]);
-  const maxBar = Math.max(1, ...projectBars.map((x) => x.value), ...paymentBars.map((x) => x.value), ...outgoingBars.map((x) => x.value));
-
   const projectRows = useMemo(() => {
     const q = projectSearch.toLowerCase().trim();
     return projects.filter((x) => (!q || `${x.contractName} ${x.goods} ${x.duration}`.toLowerCase().includes(q)) && (projectFilter === "All Goods" || x.goods === projectFilter));
@@ -213,7 +607,10 @@ function App() {
   const safePaymentPage = Math.min(paymentPage, paymentPages);
   const safeOutgoingPage = Math.min(outgoingPage, outgoingPages);
 
-  const activity = [...projects.map((x) => ({ id: `p-${x.id}`, type: "Project", title: x.contractName, date: x.date, detail: `Outstanding ${peso.format(x.outstanding)}` })), ...payments.map((x) => ({ id: `d-${x.id}`, type: "DV Payment", title: x.voucherNo, date: `2026-04-${String((x.id % 8) + 1).padStart(2, "0")}`, detail: `${x.claimantAddress} - ${peso.format(x.amount)}` })), ...outgoing.map((x) => ({ id: `o-${x.id}`, type: "Outgoing", title: x.memoNo, date: x.date, detail: `${x.thru} to ${x.forDept}` }))].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6);
+  const projectEndDateYmd = useMemo(
+    () => projectComputedEndDateYmd(projectForm.date, projectForm.duration),
+    [projectForm.date, projectForm.duration],
+  );
 
   const projectValueSeries = useMemo(
     () => projects.map((item) => ({ label: compactLabel(item.contractName), fullLabel: item.contractName, value: item.amount })),
@@ -271,7 +668,7 @@ function App() {
       id: `payment-${item.id}`,
       recordType: "DV Payment",
       title: item.voucherNo,
-      date: `2026-04-${String((item.id % 8) + 1).padStart(2, "0")}`,
+      date: item.date || "",
       status: `${item.ictssd} / ${item.gad} / ${item.cash}`,
       amount: item.amount,
     }));
@@ -287,17 +684,124 @@ function App() {
     return [...projectItems, ...paymentItems, ...outgoingItems].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
   }, [projects, payments, outgoing]);
 
-  const saveProject = (e) => {
+  useEffect(() => {
+    if (!started || view !== "projects") return undefined;
+    let cancelled = false;
+    (async () => {
+      setProjectsLoading(true);
+      setProjectLoadError("");
+      try {
+        const res = await fetch("/api/projects");
+        const raw = await res.text();
+        let data;
+        try {
+          data = raw ? JSON.parse(raw) : null;
+        } catch {
+          data = null;
+        }
+        if (!res.ok) {
+          throw new Error((data && data.message) || raw || "Failed to load projects");
+        }
+        if (!cancelled) setProjects(Array.isArray(data) ? data : []);
+      } catch (e) {
+        if (!cancelled) {
+          setProjectLoadError(e instanceof Error ? e.message : String(e));
+          setProjects([]);
+        }
+      } finally {
+        if (!cancelled) setProjectsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [started, view]);
+
+  const deleteProjectRow = async (id) => {
+    if (!window.confirm("Delete this project record?")) return;
+    setProjectSaveError("");
+    try {
+      const res = await fetch(`/api/projects/${id}`, { method: "DELETE" });
+      if (!res.ok && res.status !== 204) {
+        const raw = await res.text();
+        let msg;
+        try {
+          msg = raw ? JSON.parse(raw).message : null;
+        } catch {
+          msg = raw;
+        }
+        throw new Error(msg || "Delete failed");
+      }
+      setProjects((cur) => cur.filter((item) => item.id !== id));
+    } catch (e) {
+      setProjectSaveError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const saveProject = async (e) => {
     e.preventDefault();
     if (!projectForm.contractName || !projectForm.date || !projectForm.duration) return;
-    const rec = { id: projectEdit ?? Date.now(), contractName: projectForm.contractName.trim(), date: projectForm.date, duration: projectForm.duration.trim(), goods: projectForm.goods, amount: Number(projectForm.amount || 0), outstanding: Number(projectForm.outstanding || 0) };
-    setProjects((cur) => projectEdit ? cur.map((x) => (x.id === projectEdit ? rec : x)) : [rec, ...cur]);
-    setProjectForm(blankProject); setProjectEdit(null);
+    setProjectSaving(true);
+    setProjectSaveError("");
+    const body = {
+      contractName: projectForm.contractName.trim().slice(0, MAX_PROJECT_CONTRACT_NAME_LENGTH),
+      date: projectForm.date,
+      duration: projectForm.duration.trim(),
+      goods: projectForm.goods,
+      amount: projectMoneyDisplayToNumber(projectForm.amount),
+      outstanding: projectMoneyDisplayToNumber(projectForm.outstanding),
+    };
+    try {
+      const url = projectEdit != null ? `/api/projects/${projectEdit}` : "/api/projects";
+      const method = projectEdit != null ? "PUT" : "POST";
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const raw = await res.text();
+      let data;
+      try {
+        data = raw ? JSON.parse(raw) : null;
+      } catch {
+        data = null;
+      }
+      if (!res.ok) {
+        throw new Error((data && data.message) || raw || "Save failed");
+      }
+      const saved = data;
+      setProjects((cur) => (projectEdit != null ? cur.map((x) => (x.id === projectEdit ? saved : x)) : [saved, ...cur]));
+      setProjectForm(blankProject);
+      setProjectMoneyWarnings(blankProjectMoneyWarnings);
+      setGoodsAddVisible(false);
+      setGoodsAddDraft("");
+      setGoodsAddError("");
+      setGoodsRenameVisible(false);
+      setGoodsRenameDraft("");
+      setGoodsRenameError("");
+      setGoodsSelectError("");
+      setProjectEdit(null);
+    } catch (err) {
+      setProjectSaveError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setProjectSaving(false);
+    }
   };
   const savePayment = (e) => {
     e.preventDefault();
     if (!paymentForm.title || !paymentForm.claimantAddress || !paymentForm.voucherNo) return;
-    const rec = { id: paymentEdit ?? Date.now(), title: paymentForm.title.trim(), claimantAddress: paymentForm.claimantAddress.trim(), voucherNo: paymentForm.voucherNo.trim(), amount: Number(paymentForm.amount || 0), ictssd: paymentForm.ictssd, gad: paymentForm.gad, cash: paymentForm.cash };
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const rec = {
+      id: paymentEdit ?? Date.now(),
+      title: paymentForm.title.trim(),
+      claimantAddress: paymentForm.claimantAddress.trim(),
+      voucherNo: paymentForm.voucherNo.trim(),
+      amount: Number(paymentForm.amount || 0),
+      date: paymentForm.date?.trim() || (paymentEdit != null ? payments.find((x) => x.id === paymentEdit)?.date : null) || todayStr,
+      ictssd: paymentForm.ictssd,
+      gad: paymentForm.gad,
+      cash: paymentForm.cash,
+    };
     setPayments((cur) => paymentEdit ? cur.map((x) => (x.id === paymentEdit ? rec : x)) : [rec, ...cur]);
     setPaymentForm(blankPayment); setPaymentEdit(null);
   };
@@ -325,8 +829,8 @@ function App() {
     setActiveFaq(key === "faqs" ? FAQ_ITEMS[0].id : "");
   };
 
-  const projectExport = () => exportCsv("project-monitoring.csv", [["Name of Contract", "Date", "Duration", "Kind of Goods", "Amount of Contract", "Outstanding Value"], ...projectRows.map((x) => [x.contractName, x.date, x.duration, x.goods, x.amount, x.outstanding])]);
-  const paymentExport = () => exportCsv("dv-payment-monitoring.csv", [["Title of the Project", "Name and Address of Claimant", "Voucher No.", "Amount", "ICTSSD", "GAD", "CASH"], ...paymentRows.map((x) => [x.title, x.claimantAddress, x.voucherNo, x.amount, x.ictssd, x.gad, x.cash])]);
+  const projectExport = () => exportCsv("project-monitoring.csv", [["Name of Contract", "Start Date", "End Date", "Duration", "Kind of Goods", "Amount of Contract", "Outstanding Value"], ...projectRows.map((x) => [x.contractName, x.date, projectComputedEndDateYmd(x.date, x.duration) || "", x.duration, x.goods, x.amount, x.outstanding])]);
+  const paymentExport = () => exportCsv("dv-payment-monitoring.csv", [["Title of the Project", "Name and Address of Claimant", "Voucher No.", "Date", "Amount", "ICTSSD", "GAD", "CASH"], ...paymentRows.map((x) => [x.title, x.claimantAddress, x.voucherNo, x.date || "", x.amount, x.ictssd, x.gad, x.cash])]);
   const outgoingExport = () => exportCsv("issd-outgoing-monitoring.csv", [["Subject", "Memo Number", "Date", "Thru", "For"], ...outgoingRows.map((x) => [x.subject, x.memoNo, x.date, x.thru, x.forDept])]);
   const summaryExport = () => exportCsv("monitoring-summary.csv", [
     ["Metric", "Value", "Supporting Text"],
@@ -477,10 +981,45 @@ function App() {
       <main className="workspace">
         <header className="topbar"><div><p className="topbar__eyebrow">Monitoring System</p><h2>{currentViewMeta.title}</h2></div><div className="topbar-actions"><button type="button" className="icon-button" aria-label={theme === "light" ? "Enable dark mode" : "Enable light mode"} title={theme === "light" ? "Enable dark mode" : "Enable light mode"} onClick={() => setTheme((x) => x === "light" ? "dark" : "light")}><ThemeIcon theme={theme} /></button></div></header>
 
-        {view === "projects" && <section className="page tool-page"><div className="tool-layout"><section className="panel metric-panel"><div className="metric-section"><div className="inline-stat-grid"><MetricChip label="Total of contracts" value={number.format(projects.length)} /><MetricChip label="Total of contract value" value={peso.format(stats.totalContractValue)} /><MetricChip label="Total of outstanding" value={peso.format(stats.totalOutstandingValue)} /></div></div></section><section className="panel form-panel"><div className="panel__header"><div><p className="panel__kicker">Project Monitoring Tool</p><h3>{projectEdit ? "Edit project record" : "Add new project"}</h3></div></div><form className="record-form" onSubmit={saveProject}><label><span>Name of Contract</span><input value={projectForm.contractName} onChange={(e) => setProjectForm({ ...projectForm, contractName: e.target.value })} placeholder="Enter contract title" /></label><div className="form-row"><label><span>Date</span><input type="date" value={projectForm.date} onChange={(e) => setProjectForm({ ...projectForm, date: e.target.value })} /></label><label><span>Duration</span><input value={projectForm.duration} onChange={(e) => setProjectForm({ ...projectForm, duration: e.target.value })} placeholder="e.g. 120 days" /></label></div><label><span>Kind of Goods</span><select value={projectForm.goods} onChange={(e) => setProjectForm({ ...projectForm, goods: e.target.value })}>{GOODS.filter((g) => g !== "All Goods").map((g) => <option key={g}>{g}</option>)}</select></label><div className="form-row"><label><span>Amount of Contract</span><input type="number" min="0" step="0.01" value={projectForm.amount} onChange={(e) => setProjectForm({ ...projectForm, amount: e.target.value })} placeholder="0.00" /></label><label><span>Outstanding Value</span><input type="number" min="0" step="0.01" value={projectForm.outstanding} onChange={(e) => setProjectForm({ ...projectForm, outstanding: e.target.value })} placeholder="0.00" /></label></div><div className="form-actions"><button type="submit" className="primary-button">{projectEdit ? "Save project" : "Add project"}</button><button type="button" className="ghost-button" onClick={() => { setProjectEdit(null); setProjectForm(blankProject); }}>Clear form</button></div></form></section><section className="panel table-panel">{toolbar("Project records", "Search, filter, and export contract monitoring data.", projectSearch, setProjectSearch, projectFilter, setProjectFilter, GOODS, "Goods", projectExport)}<div className="table-wrap"><table><thead><tr><th>Name of Contract</th><th>Date</th><th>Duration</th><th>Kind of Goods</th><th>Amount of Contract</th><th>Outstanding Value</th><th>Actions</th></tr></thead><tbody>{pageSlice(projectRows, safeProjectPage).map((x) => <tr key={x.id}><td>{x.contractName}</td><td>{fmtDate(x.date)}</td><td>{x.duration}</td><td>{x.goods}</td><td>{peso.format(x.amount)}</td><td>{peso.format(x.outstanding)}</td><td><ActionSet onView={() => open("Project", x.contractName, [["Date", fmtDate(x.date)], ["Duration", x.duration], ["Kind of Goods", x.goods], ["Amount of Contract", peso.format(x.amount)], ["Outstanding Value", peso.format(x.outstanding)]])} onEdit={() => { setProjectEdit(x.id); setProjectForm({ contractName: x.contractName, date: x.date, duration: x.duration, goods: x.goods, amount: String(x.amount), outstanding: String(x.outstanding) }); }} onDelete={() => setProjects((cur) => cur.filter((item) => item.id !== x.id))} /></td></tr>)}</tbody></table></div>{pager(safeProjectPage, projectPages, projectRows.length, setProjectPage)}</section></div></section>}
-        {view === "payments" && <section className="page tool-page"><div className="tool-layout"><section className="panel metric-panel"><div className="metric-section"><div className="inline-stat-grid"><MetricChip label="Total DV" value={number.format(payments.length)} /><MetricChip label="Total amount" value={peso.format(stats.totalVoucherValue)} /><MetricChip label="Status alerts" value={number.format(stats.pendingPayments)} /></div></div></section><section className="panel form-panel"><div className="panel__header"><div><p className="panel__kicker">DV Payment Monitoring Tool</p><h3>{paymentEdit ? "Edit voucher record" : "Add new DV record"}</h3></div></div><form className="record-form" onSubmit={savePayment}><div className="form-section"><p className="form-section__title">Input Fields</p></div><label><span>Title of the Project *</span><input value={paymentForm.title} onChange={(e) => setPaymentForm({ ...paymentForm, title: e.target.value })} placeholder="Enter project title" /></label><label><span>Name and Address of Claimant</span><textarea value={paymentForm.claimantAddress} onChange={(e) => setPaymentForm({ ...paymentForm, claimantAddress: e.target.value })} placeholder="Enter claimant name and address" /></label><div className="form-row"><label><span>Voucher No.</span><input value={paymentForm.voucherNo} onChange={(e) => setPaymentForm({ ...paymentForm, voucherNo: e.target.value })} placeholder="KM-3313" /></label><label><span>Amount: Php.</span><input type="number" min="0" step="0.01" value={paymentForm.amount} onChange={(e) => setPaymentForm({ ...paymentForm, amount: e.target.value })} placeholder="0.00" /></label></div><div className="form-section"><p className="form-section__title">Monitoring Fields</p></div><div className="form-row form-row--triple"><label><span>ICTSSD (Department)</span><select value={paymentForm.ictssd} onChange={(e) => setPaymentForm({ ...paymentForm, ictssd: e.target.value })}>{ICTSSD.map((o) => <option key={o}>{o}</option>)}</select></label><label><span>GAD (Department)</span><select value={paymentForm.gad} onChange={(e) => setPaymentForm({ ...paymentForm, gad: e.target.value })}>{GAD.map((o) => <option key={o}>{o}</option>)}</select></label><label><span>CASH (Department)</span><select value={paymentForm.cash} onChange={(e) => setPaymentForm({ ...paymentForm, cash: e.target.value })}>{CASH.map((o) => <option key={o}>{o}</option>)}</select></label></div><div className="form-actions"><button type="submit" className="primary-button">{paymentEdit ? "Save voucher" : "Add DV record"}</button><button type="button" className="ghost-button" onClick={() => { setPaymentEdit(null); setPaymentForm(blankPayment); }}>Clear form</button></div></form></section><section className="panel table-panel">{toolbar("DV payment records", "Track voucher workflow progress with clear department status indicators.", paymentSearch, setPaymentSearch, paymentFilter, setPaymentFilter, PAYMENT_FILTERS, "Status", paymentExport)}<div className="table-wrap"><table><thead><tr><th>Title of the Project</th><th>Name and Address of Claimant</th><th>Voucher No.</th><th>Amount</th><th>ICTSSD</th><th>GAD</th><th>CASH</th><th>Actions</th></tr></thead><tbody>{pageSlice(paymentRows, safePaymentPage).map((x) => <tr key={x.id}><td>{x.title}</td><td>{x.claimantAddress}</td><td>{x.voucherNo}</td><td>{peso.format(x.amount)}</td><td><StatusBadge label={x.ictssd} /></td><td><StatusBadge label={x.gad} /></td><td><StatusBadge label={x.cash} /></td><td><ActionSet onView={() => open("DV Payment", x.voucherNo, [["Title of the Project", x.title], ["Name and Address of Claimant", x.claimantAddress], ["Voucher No.", x.voucherNo], ["Amount", peso.format(x.amount)], ["ICTSSD", x.ictssd], ["GAD", x.gad], ["CASH", x.cash]])} onEdit={() => { setPaymentEdit(x.id); setPaymentForm({ title: x.title, claimantAddress: x.claimantAddress, voucherNo: x.voucherNo, amount: String(x.amount), ictssd: x.ictssd, gad: x.gad, cash: x.cash }); }} onDelete={() => setPayments((cur) => cur.filter((item) => item.id !== x.id))} /></td></tr>)}</tbody></table></div>{pager(safePaymentPage, paymentPages, paymentRows.length, setPaymentPage)}</section></div></section>}
+        {view === "projects" && (
+        <section className="page tool-page">
+          <div className="tool-layout">
+            {(projectLoadError || projectSaveError) && (
+              <div
+                role="alert"
+                style={{
+                  marginBottom: "1rem",
+                  padding: "0.65rem 0.9rem",
+                  borderRadius: 8,
+                  background: "rgba(180, 40, 40, 0.12)",
+                  fontSize: "0.9rem",
+                }}
+              >
+                {projectLoadError ? <div>{projectLoadError}</div> : null}
+                {projectSaveError ? <div>{projectSaveError}</div> : null}
+              </div>
+            )}
+            <section className="panel metric-panel"><div className="metric-section"><div className="inline-stat-grid"><MetricChip label="Total of contracts" value={number.format(projects.length)} /><MetricChip label="Total of contract value" value={peso.format(stats.totalContractValue)} /><MetricChip label="Total of outstanding" value={peso.format(stats.totalOutstandingValue)} /></div></div></section><section className="panel form-panel"><div className="panel__header"><div><p className="panel__kicker">Project Monitoring Tool</p><h3>{projectEdit ? "Edit project record" : "Add new project"}</h3></div></div><form className="record-form" onSubmit={saveProject}><label><span>Name of Contract</span><input value={projectForm.contractName} maxLength={MAX_PROJECT_CONTRACT_NAME_LENGTH} onChange={(e) => setProjectForm({ ...projectForm, contractName: e.target.value.slice(0, MAX_PROJECT_CONTRACT_NAME_LENGTH) })} placeholder="Enter contract title" /></label><div className="form-row"><label><span>Start Date</span><input type="date" title="Choose a date using the calendar" value={projectForm.date} onKeyDown={blockDateFieldDirectEntry} onPaste={(e) => e.preventDefault()} onCut={(e) => e.preventDefault()} onChange={(e) => setProjectForm({ ...projectForm, date: e.target.value })} /></label><label><span>Duration</span><input value={projectForm.duration} onChange={(e) => setProjectForm({ ...projectForm, duration: e.target.value })} placeholder="e.g. 120 days, 12 weeks, 6 months, 1 year" /></label></div><label><span>End Date</span><input type="text" readOnly tabIndex={-1} className="form-field-computed" value={projectEndDateYmd ? fmtDate(projectEndDateYmd) : ""} placeholder="Set start date and duration" title="Computed from start date plus duration. Use days, weeks, months, or years (e.g. 90 days, 8 wks, 3 mo, 2 years). A plain number defaults to days." /></label><div className="form-label-with-action"><div className="form-label-with-action__row"><label className="form-label-with-action__text" htmlFor="project-goods-select"><span>Kind of Goods</span></label>{goodsAddVisible ? (<button type="button" className="ghost-button ghost-button--compact ghost-button--goods-action" onClick={() => { setGoodsAddVisible(false); setGoodsAddDraft(""); setGoodsAddError(""); }}>Cancel</button>) : (<button type="button" className="ghost-button ghost-button--compact ghost-button--goods-action" onClick={() => { setGoodsAddError(""); setGoodsAddDraft(""); setGoodsAddVisible(true); }}>Add Goods</button>)}</div>{goodsAddVisible ? (<div className="form-inline-add-goods"><input type="text" value={goodsAddDraft} onChange={(e) => { setGoodsAddDraft(e.target.value); setGoodsAddError(""); }} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addGoodsCommit(); } }} placeholder="e.g. Vehicles" aria-label="New kind of goods" /><button type="button" className="ghost-button ghost-button--compact" onClick={addGoodsCommit}>Add</button></div>) : null}{goodsAddError ? (<p className="form-field-warning form-field-warning--tight" role="alert">{goodsAddError}</p>) : null}{(goodsRenameVisible || goodsAddVisible) ? (
+              <select id="project-goods-select" className="form-goods-select form-goods-select--visual-hide" value={projectForm.goods} onChange={(e) => { setProjectForm({ ...projectForm, goods: e.target.value }); setGoodsRenameError(""); setGoodsSelectError(""); }} tabIndex={-1} aria-label="Current kind of goods">{goodsOptions.map((g) => <option key={g}>{g}</option>)}</select>
+            ) : (
+              <div className="form-goods-select-row">
+                <select id="project-goods-select" className="form-goods-select" value={projectForm.goods} onChange={(e) => { setProjectForm({ ...projectForm, goods: e.target.value }); setGoodsRenameError(""); setGoodsSelectError(""); }}>{goodsOptions.map((g) => <option key={g}>{g}</option>)}</select><button type="button" className="form-goods-select__icon-btn" aria-label="Rename kind of goods" title="Renames this kind and updates every project that uses it in the database" onClick={() => { setGoodsSelectError(""); setGoodsRenameError(""); setGoodsRenameDraft(projectForm.goods); setGoodsRenameVisible(true); }}><GoodsEditIcon /></button><button type="button" className="form-goods-select__icon-btn form-goods-select__icon-btn--danger" aria-label="Remove or hide kind from list" title="Hides an unused built-in, or removes a kind you added with Add Goods. Not available while a project still uses this kind." disabled={projects.some((p) => p.goods === projectForm.goods) || (!BASE_GOODS.includes(projectForm.goods) && !extraGoods.some((x) => x === projectForm.goods))} onClick={() => void deleteGoodsKind()}><GoodsTrashIcon /></button></div>
+            )}{goodsRenameVisible ? (<div className="form-inline-add-goods form-inline-add-goods--rename"><input type="text" value={goodsRenameDraft} onChange={(e) => { setGoodsRenameDraft(e.target.value); setGoodsRenameError(""); }} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void renameGoodsCommit(); } }} placeholder="New name" aria-label="Rename kind of goods" /><button type="button" className="ghost-button ghost-button--compact" onClick={() => void renameGoodsCommit()}>Save</button><button type="button" className="ghost-button ghost-button--compact" onClick={() => { setGoodsRenameVisible(false); setGoodsRenameError(""); }}>Cancel</button></div>) : null}{(goodsRenameError || goodsSelectError) ? (<p className="form-field-warning form-field-warning--tight" role="alert">{goodsRenameError || goodsSelectError}</p>) : null}</div><div className="form-row form-row--money-warnings"><label><span>Amount of Contract</span><input type="text" inputMode="decimal" autoComplete="off" value={projectForm.amount} onChange={(e) => { const st = projectMoneyParseState(e.target.value); setProjectForm({ ...projectForm, amount: st.display }); setProjectMoneyWarnings((w) => ({ ...w, amount: { invalidChars: st.hadInvalidChars, maxDigits: st.digitLimitExceeded } })); }} placeholder="0.00" aria-invalid={projectMoneyWarnings.amount.invalidChars || projectMoneyWarnings.amount.maxDigits} /><div className="form-field-warning-slot">{(projectMoneyWarnings.amount.invalidChars || projectMoneyWarnings.amount.maxDigits) ? (<p className="form-field-warning" role="alert">{projectMoneyWarnings.amount.invalidChars ? "Only numbers, commas, and periods are allowed. " : null}{projectMoneyWarnings.amount.maxDigits ? `At most ${MAX_PROJECT_MONEY_DIGITS} digits are allowed.` : null}</p>) : null}</div></label><label><span>Outstanding Value</span><input type="text" inputMode="decimal" autoComplete="off" value={projectForm.outstanding} onChange={(e) => { const st = projectMoneyParseState(e.target.value); setProjectForm({ ...projectForm, outstanding: st.display }); setProjectMoneyWarnings((w) => ({ ...w, outstanding: { invalidChars: st.hadInvalidChars, maxDigits: st.digitLimitExceeded } })); }} placeholder="0.00" aria-invalid={projectMoneyWarnings.outstanding.invalidChars || projectMoneyWarnings.outstanding.maxDigits} /><div className="form-field-warning-slot">{(projectMoneyWarnings.outstanding.invalidChars || projectMoneyWarnings.outstanding.maxDigits) ? (<p className="form-field-warning" role="alert">{projectMoneyWarnings.outstanding.invalidChars ? "Only numbers, commas, and periods are allowed. " : null}{projectMoneyWarnings.outstanding.maxDigits ? `At most ${MAX_PROJECT_MONEY_DIGITS} digits are allowed.` : null}</p>) : null}</div></label></div><div className="form-actions"><button type="submit" className="primary-button" disabled={projectSaving}>{projectSaving ? "Saving…" : projectEdit ? "Save project" : "Add project"}</button><button type="button" className="ghost-button" onClick={() => {
+                  setProjectEdit(null);
+                  setProjectForm(blankProject);
+                  setProjectMoneyWarnings(blankProjectMoneyWarnings);
+                  setGoodsAddVisible(false);
+                  setGoodsAddDraft("");
+                  setGoodsAddError("");
+                  setGoodsRenameVisible(false);
+                  setGoodsRenameDraft("");
+                  setGoodsRenameError("");
+                  setGoodsSelectError("");
+                  setProjectSaveError("");
+                }}>Clear form</button></div></form></section><section className="panel table-panel">{toolbar("Project records", "Search, filter, and export contract monitoring data.", projectSearch, setProjectSearch, projectFilter, setProjectFilter, goodsFilterOptions, "Goods", projectExport)}<div className="table-wrap"><table><thead><tr><th>Name of Contract</th><th>Start Date</th><th>End Date</th><th>Duration</th><th>Kind of Goods</th><th>Amount of Contract</th><th>Outstanding Value</th><th>Actions</th></tr></thead><tbody>{projectsLoading ? <tr><td colSpan={8}>Loading projects…</td></tr> : pageSlice(projectRows, safeProjectPage).map((x) => <tr key={x.id}><td>{x.contractName}</td><td>{fmtDate(x.date)}</td><td>{formatProjectEndDateLabel(x.date, x.duration)}</td><td>{x.duration}</td><td>{x.goods}</td><td>{peso.format(x.amount)}</td><td>{peso.format(x.outstanding)}</td><td><ActionSet onView={() => open("Project", x.contractName, [["Start Date", fmtDate(x.date)], ["End Date", formatProjectEndDateLabel(x.date, x.duration)], ["Duration", x.duration], ["Kind of Goods", x.goods], ["Amount of Contract", peso.format(x.amount)], ["Outstanding Value", peso.format(x.outstanding)]])} onEdit={() => { setProjectEdit(x.id); setProjectMoneyWarnings(blankProjectMoneyWarnings); setGoodsAddVisible(false); setGoodsAddDraft(""); setGoodsAddError(""); setGoodsRenameVisible(false); setGoodsRenameDraft(""); setGoodsRenameError(""); setGoodsSelectError(""); setProjectForm({ contractName: String(x.contractName ?? "").slice(0, MAX_PROJECT_CONTRACT_NAME_LENGTH), date: x.date, duration: x.duration, goods: x.goods, amount: projectMoneyFromNumber(x.amount), outstanding: projectMoneyFromNumber(x.outstanding) }); }} onDelete={() => void deleteProjectRow(x.id)} /></td></tr>)}</tbody></table></div>{pager(safeProjectPage, projectPages, projectRows.length, setProjectPage)}</section></div></section>)}
+        {view === "payments" && <section className="page tool-page"><div className="tool-layout"><section className="panel metric-panel"><div className="metric-section"><div className="inline-stat-grid"><MetricChip label="Total DV" value={number.format(payments.length)} /><MetricChip label="Total amount" value={peso.format(stats.totalVoucherValue)} /><MetricChip label="Status alerts" value={number.format(stats.pendingPayments)} /></div></div></section><section className="panel form-panel"><div className="panel__header"><div><p className="panel__kicker">DV Payment Monitoring Tool</p><h3>{paymentEdit ? "Edit voucher record" : "Add new DV record"}</h3></div></div><form className="record-form" onSubmit={savePayment}><div className="form-section"><p className="form-section__title">Input Fields</p></div><label><span>Title of the Project *</span><input value={paymentForm.title} onChange={(e) => setPaymentForm({ ...paymentForm, title: e.target.value })} placeholder="Enter project title" /></label><label><span>Name and Address of Claimant</span><textarea value={paymentForm.claimantAddress} onChange={(e) => setPaymentForm({ ...paymentForm, claimantAddress: e.target.value })} placeholder="Enter claimant name and address" /></label><div className="form-row"><label><span>Voucher No.</span><input value={paymentForm.voucherNo} onChange={(e) => setPaymentForm({ ...paymentForm, voucherNo: e.target.value })} placeholder="Enter voucher number" /></label><label><span>Amount: Php.</span><input type="number" min="0" step="0.01" value={paymentForm.amount} onChange={(e) => setPaymentForm({ ...paymentForm, amount: e.target.value })} placeholder="0.00" /></label><label><span>Record date</span><input type="date" title="Choose a date using the calendar" value={paymentForm.date} onKeyDown={blockDateFieldDirectEntry} onPaste={(e) => e.preventDefault()} onCut={(e) => e.preventDefault()} onChange={(e) => setPaymentForm({ ...paymentForm, date: e.target.value })} /></label></div><div className="form-section"><p className="form-section__title">Monitoring Fields</p></div><div className="form-row form-row--triple"><label><span>ICTSSD (Department)</span><select value={paymentForm.ictssd} onChange={(e) => setPaymentForm({ ...paymentForm, ictssd: e.target.value })}>{ICTSSD.map((o) => <option key={o}>{o}</option>)}</select></label><label><span>GAD (Department)</span><select value={paymentForm.gad} onChange={(e) => setPaymentForm({ ...paymentForm, gad: e.target.value })}>{GAD.map((o) => <option key={o}>{o}</option>)}</select></label><label><span>CASH (Department)</span><select value={paymentForm.cash} onChange={(e) => setPaymentForm({ ...paymentForm, cash: e.target.value })}>{CASH.map((o) => <option key={o}>{o}</option>)}</select></label></div><div className="form-actions"><button type="submit" className="primary-button">{paymentEdit ? "Save voucher" : "Add DV record"}</button><button type="button" className="ghost-button" onClick={() => { setPaymentEdit(null); setPaymentForm(blankPayment); }}>Clear form</button></div></form></section><section className="panel table-panel">{toolbar("DV payment records", "Track voucher workflow progress with clear department status indicators.", paymentSearch, setPaymentSearch, paymentFilter, setPaymentFilter, PAYMENT_FILTERS, "Status", paymentExport)}<div className="table-wrap"><table><thead><tr><th>Title of the Project</th><th>Name and Address of Claimant</th><th>Voucher No.</th><th>Date</th><th>Amount</th><th>ICTSSD</th><th>GAD</th><th>CASH</th><th>Actions</th></tr></thead><tbody>{pageSlice(paymentRows, safePaymentPage).map((x) => <tr key={x.id}><td>{x.title}</td><td>{x.claimantAddress}</td><td>{x.voucherNo}</td><td>{fmtDate(x.date)}</td><td>{peso.format(x.amount)}</td><td><StatusBadge label={x.ictssd} /></td><td><StatusBadge label={x.gad} /></td><td><StatusBadge label={x.cash} /></td><td><ActionSet onView={() => open("DV Payment", x.voucherNo, [["Title of the Project", x.title], ["Name and Address of Claimant", x.claimantAddress], ["Voucher No.", x.voucherNo], ["Date", fmtDate(x.date)], ["Amount", peso.format(x.amount)], ["ICTSSD", x.ictssd], ["GAD", x.gad], ["CASH", x.cash]])} onEdit={() => { setPaymentEdit(x.id); setPaymentForm({ title: x.title, claimantAddress: x.claimantAddress, voucherNo: x.voucherNo, amount: String(x.amount), date: x.date || "", ictssd: x.ictssd, gad: x.gad, cash: x.cash }); }} onDelete={() => setPayments((cur) => cur.filter((item) => item.id !== x.id))} /></td></tr>)}</tbody></table></div>{pager(safePaymentPage, paymentPages, paymentRows.length, setPaymentPage)}</section></div></section>}
 
-        {view === "outgoing" && <section className="page tool-page"><div className="tool-layout"><section className="panel metric-panel"><div className="metric-section"><div className="inline-stat-grid"><MetricChip label="Total outgoing" value={number.format(outgoing.length)} /><MetricChip label="Top route" value={outgoingBars[0]?.label || "None"} /><MetricChip label="Departments hit" value={number.format(outgoingBars.length)} /></div></div></section><section className="panel form-panel"><div className="panel__header"><div><p className="panel__kicker">ISSD Outgoing Monitoring Tool</p><h3>{outgoingEdit ? "Edit outgoing route" : "Add outgoing record"}</h3></div></div><form className="record-form" onSubmit={saveOutgoing}><label><span>Subject</span><textarea value={outgoingForm.subject} onChange={(e) => setOutgoingForm({ ...outgoingForm, subject: e.target.value })} placeholder="Enter the memo subject" /></label><div className="form-row"><label><span>Memo Number</span><input value={outgoingForm.memoNo} onChange={(e) => setOutgoingForm({ ...outgoingForm, memoNo: e.target.value })} placeholder="ISSD-YYYY-000" /></label><label><span>Date</span><input type="date" value={outgoingForm.date} onChange={(e) => setOutgoingForm({ ...outgoingForm, date: e.target.value })} /></label></div><div className="form-row"><label><span>Thru</span><select value={outgoingForm.thru} onChange={(e) => setOutgoingForm({ ...outgoingForm, thru: e.target.value })}>{THRU.map((o) => <option key={o}>{o}</option>)}</select></label><label><span>For</span><select value={outgoingForm.forDept} onChange={(e) => setOutgoingForm({ ...outgoingForm, forDept: e.target.value })}>{FOR.map((o) => <option key={o}>{o}</option>)}</select></label></div><div className="form-actions"><button type="submit" className="primary-button">{outgoingEdit ? "Save outgoing record" : "Add outgoing"}</button><button type="button" className="ghost-button" onClick={() => { setOutgoingEdit(null); setOutgoingForm(blankOutgoing); }}>Clear form</button></div></form></section><section className="panel table-panel">{toolbar("Outgoing records", "Monitor subject routing and department distribution.", outgoingSearch, setOutgoingSearch, outgoingFilter, setOutgoingFilter, ["All", ...FOR], "For", outgoingExport)}<div className="table-wrap"><table><thead><tr><th>Subject</th><th>Memo Number</th><th>Date</th><th>Thru</th><th>For</th><th>Actions</th></tr></thead><tbody>{pageSlice(outgoingRows, safeOutgoingPage).map((x) => <tr key={x.id}><td>{x.subject}</td><td>{x.memoNo}</td><td>{fmtDate(x.date)}</td><td>{x.thru}</td><td>{x.forDept}</td><td><ActionSet onView={() => open("Outgoing", x.memoNo, [["Subject", x.subject], ["Date", fmtDate(x.date)], ["Thru", x.thru], ["For", x.forDept]])} onEdit={() => { setOutgoingEdit(x.id); setOutgoingForm({ subject: x.subject, memoNo: x.memoNo, date: x.date, thru: x.thru, forDept: x.forDept }); }} onDelete={() => setOutgoing((cur) => cur.filter((item) => item.id !== x.id))} /></td></tr>)}</tbody></table></div>{pager(safeOutgoingPage, outgoingPages, outgoingRows.length, setOutgoingPage)}</section></div></section>}
+        {view === "outgoing" && <section className="page tool-page"><div className="tool-layout"><section className="panel metric-panel"><div className="metric-section"><div className="inline-stat-grid"><MetricChip label="Total outgoing" value={number.format(outgoing.length)} /><MetricChip label="Top route" value={outgoingBars[0]?.label || "None"} /><MetricChip label="Departments hit" value={number.format(outgoingBars.length)} /></div></div></section><section className="panel form-panel"><div className="panel__header"><div><p className="panel__kicker">ISSD Outgoing Monitoring Tool</p><h3>{outgoingEdit ? "Edit outgoing route" : "Add outgoing record"}</h3></div></div><form className="record-form" onSubmit={saveOutgoing}><label><span>Subject</span><textarea value={outgoingForm.subject} onChange={(e) => setOutgoingForm({ ...outgoingForm, subject: e.target.value })} placeholder="Enter the memo subject" /></label><div className="form-row"><label><span>Memo Number</span><input value={outgoingForm.memoNo} onChange={(e) => setOutgoingForm({ ...outgoingForm, memoNo: e.target.value })} placeholder="ISSD-YYYY-000" /></label><label><span>Date</span><input type="date" title="Choose a date using the calendar" value={outgoingForm.date} onKeyDown={blockDateFieldDirectEntry} onPaste={(e) => e.preventDefault()} onCut={(e) => e.preventDefault()} onChange={(e) => setOutgoingForm({ ...outgoingForm, date: e.target.value })} /></label></div><div className="form-row"><label><span>Thru</span><select value={outgoingForm.thru} onChange={(e) => setOutgoingForm({ ...outgoingForm, thru: e.target.value })}>{THRU.map((o) => <option key={o}>{o}</option>)}</select></label><label><span>For</span><select value={outgoingForm.forDept} onChange={(e) => setOutgoingForm({ ...outgoingForm, forDept: e.target.value })}>{FOR.map((o) => <option key={o}>{o}</option>)}</select></label></div><div className="form-actions"><button type="submit" className="primary-button">{outgoingEdit ? "Save outgoing record" : "Add outgoing"}</button><button type="button" className="ghost-button" onClick={() => { setOutgoingEdit(null); setOutgoingForm(blankOutgoing); }}>Clear form</button></div></form></section><section className="panel table-panel">{toolbar("Outgoing records", "Monitor subject routing and department distribution.", outgoingSearch, setOutgoingSearch, outgoingFilter, setOutgoingFilter, ["All", ...FOR], "For", outgoingExport)}<div className="table-wrap"><table><thead><tr><th>Subject</th><th>Memo Number</th><th>Date</th><th>Thru</th><th>For</th><th>Actions</th></tr></thead><tbody>{pageSlice(outgoingRows, safeOutgoingPage).map((x) => <tr key={x.id}><td>{x.subject}</td><td>{x.memoNo}</td><td>{fmtDate(x.date)}</td><td>{x.thru}</td><td>{x.forDept}</td><td><ActionSet onView={() => open("Outgoing", x.memoNo, [["Subject", x.subject], ["Date", fmtDate(x.date)], ["Thru", x.thru], ["For", x.forDept]])} onEdit={() => { setOutgoingEdit(x.id); setOutgoingForm({ subject: x.subject, memoNo: x.memoNo, date: x.date, thru: x.thru, forDept: x.forDept }); }} onDelete={() => setOutgoing((cur) => cur.filter((item) => item.id !== x.id))} /></td></tr>)}</tbody></table></div>{pager(safeOutgoingPage, outgoingPages, outgoingRows.length, setOutgoingPage)}</section></div></section>}
 
         {view === "reports" && (
           <section className="page reports-page">
@@ -846,9 +1385,10 @@ function buildDetailSections(modal) {
     return [
       {
         title: "Basic Information",
-        columns: 3,
+        columns: 2,
         fields: [
-          detailField("Date", byLabel["Date"]),
+          detailField("Start Date", byLabel["Start Date"]),
+          detailField("End Date", byLabel["End Date"]),
           detailField("Duration", byLabel["Duration"]),
           detailField("Kind of Goods", byLabel["Kind of Goods"]),
         ],
@@ -916,7 +1456,8 @@ function buildDetailSections(modal) {
 function buildProjectDetailFields(modal) {
   const byLabel = Object.fromEntries(modal.rows);
   return [
-    detailField("Date", byLabel["Date"]),
+    detailField("Start Date", byLabel["Start Date"]),
+    detailField("End Date", byLabel["End Date"]),
     detailField("Duration", byLabel["Duration"]),
     detailField("Kind of Goods", byLabel["Kind of Goods"]),
     detailField("Amount of Contract", byLabel["Amount of Contract"]),
@@ -936,6 +1477,8 @@ function detailField(label, value) {
 function iconForField(label) {
   const map = {
     Date: "calendar",
+    "Start Date": "calendar",
+    "End Date": "calendar",
     Duration: "clock",
     "Kind of Goods": "box",
     "Amount of Contract": "peso",
@@ -979,6 +1522,23 @@ function DetailFieldIcon({ name }) {
 
 function CloseIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17" /></svg>;
+}
+
+function GoodsEditIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 20.25h3.5L18 9.75l-3.5-3.5L4 16.75v3.5Z" />
+      <path d="m14.5 5.75 3.5 3.5" />
+    </svg>
+  );
+}
+
+function GoodsTrashIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M9.25 10v8.5M14.75 10v8.5M5.75 10h12.5l-.75 9h-11l-.75-9ZM9.25 10V7a1 1 0 011-1h3.5a1 1 0 011 1v3M4 10h16" />
+    </svg>
+  );
 }
 function ThemeIcon({ theme }) {
   return (
