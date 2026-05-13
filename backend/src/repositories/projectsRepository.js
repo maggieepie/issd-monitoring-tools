@@ -13,6 +13,14 @@ function formatDateCell(value) {
   return s.length >= 10 ? s.slice(0, 10) : s;
 }
 
+function formatTimestampCell(value) {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (value == null) return null;
+  return String(value);
+}
+
 function mapRow(row) {
   if (!row) return null;
   return {
@@ -23,7 +31,22 @@ function mapRow(row) {
     goods: String(row.GOODS ?? row.goods ?? ""),
     amount: Number(row.AMOUNT ?? row.amount ?? 0),
     outstanding: Number(row.OUTSTANDING ?? row.outstanding ?? 0),
+    createdAt: formatTimestampCell(row.CREATED_AT ?? row.created_at),
+    updatedAt: formatTimestampCell(row.UPDATED_AT ?? row.updated_at),
   };
+}
+
+/** @param {import("oracledb").Connection} connection */
+async function selectProjectRow(connection, id) {
+  const result = await connection.execute(
+    `SELECT ID, CONTRACT_NAME, CONTRACT_DATE, DURATION, GOODS, AMOUNT, OUTSTANDING,
+            CREATED_AT, UPDATED_AT
+       FROM ${TABLE}
+      WHERE ID = :id`,
+    { id },
+    { outFormat: oracledb.OUT_FORMAT_OBJECT },
+  );
+  return mapRow(result.rows?.[0]);
 }
 
 async function listProjects() {
@@ -31,7 +54,8 @@ async function listProjects() {
   const connection = await pool.getConnection();
   try {
     const result = await connection.execute(
-      `SELECT ID, CONTRACT_NAME, CONTRACT_DATE, DURATION, GOODS, AMOUNT, OUTSTANDING
+      `SELECT ID, CONTRACT_NAME, CONTRACT_DATE, DURATION, GOODS, AMOUNT, OUTSTANDING,
+              CREATED_AT, UPDATED_AT
          FROM ${TABLE}
         ORDER BY CONTRACT_DATE DESC, ID DESC`,
       [],
@@ -62,15 +86,7 @@ async function createProject(payload) {
       },
       { autoCommit: true },
     );
-    return mapRow({
-      ID: id,
-      CONTRACT_NAME: payload.contractName,
-      CONTRACT_DATE: payload.date,
-      DURATION: payload.duration,
-      GOODS: payload.goods,
-      AMOUNT: payload.amount,
-      OUTSTANDING: payload.outstanding,
-    });
+    return await selectProjectRow(connection, id);
   } finally {
     await connection.close();
   }
@@ -87,7 +103,8 @@ async function updateProject(id, payload) {
               DURATION = :dur,
               GOODS = :goods,
               AMOUNT = :amt,
-              OUTSTANDING = :outst
+              OUTSTANDING = :outst,
+              UPDATED_AT = SYSTIMESTAMP
         WHERE ID = :id`,
       {
         id,
@@ -105,15 +122,7 @@ async function updateProject(id, payload) {
       err.status = 404;
       throw err;
     }
-    return mapRow({
-      ID: id,
-      CONTRACT_NAME: payload.contractName,
-      CONTRACT_DATE: payload.date,
-      DURATION: payload.duration,
-      GOODS: payload.goods,
-      AMOUNT: payload.amount,
-      OUTSTANDING: payload.outstanding,
-    });
+    return await selectProjectRow(connection, id);
   } finally {
     await connection.close();
   }

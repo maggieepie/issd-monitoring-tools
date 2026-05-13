@@ -8,7 +8,7 @@ function oracleHelpMessage(message) {
   return message;
 }
 
-const MAX_CONTRACT_NAME_LENGTH = 50;
+const MAX_CONTRACT_NAME_LENGTH = 175;
 
 function parseProjectBody(body) {
   const contractName = String(body?.contractName ?? "").trim().slice(0, MAX_CONTRACT_NAME_LENGTH);
