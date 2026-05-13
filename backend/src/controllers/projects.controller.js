@@ -9,11 +9,12 @@ function oracleHelpMessage(message) {
 }
 
 const MAX_CONTRACT_NAME_LENGTH = 175;
+const MAX_DURATION_LENGTH = 30;
 
 function parseProjectBody(body) {
   const contractName = String(body?.contractName ?? "").trim().slice(0, MAX_CONTRACT_NAME_LENGTH);
   const date = String(body?.date ?? "").trim();
-  const duration = String(body?.duration ?? "").trim();
+  const duration = String(body?.duration ?? "").trim().slice(0, MAX_DURATION_LENGTH);
   const goods = String(body?.goods ?? "").trim();
   const amount = Number(body?.amount ?? 0);
   const outstanding = Number(body?.outstanding ?? 0);

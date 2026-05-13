@@ -522,10 +522,14 @@ a { color: inherit; }
 }
 .record-form textarea { min-height: 108px; resize: vertical; }
 .form-field-warning { margin: 0; font-size: 0.85rem; line-height: 1.45; color: var(--warning); }
-/* Reserves space so amount/outstanding inputs and form actions do not jump when warnings show */
+/* Tight by default so fields like contract name and duration keep even vertical spacing. */
 .form-field-warning-slot {
-  min-height: calc(0.85rem * 1.45 * 3 + 4px);
+  min-height: 0;
   margin-top: 2px;
+}
+/* Reserve height only on amount/outstanding so warnings do not shift that row. */
+.form-row--money-warnings .form-field-warning-slot {
+  min-height: calc(0.85rem * 1.45 * 3 + 4px);
 }
 .form-row--money-warnings { align-items: start; }
 .form-label-with-action { display: grid; gap: 8px; position: relative; }
@@ -644,6 +648,17 @@ a { color: inherit; }
 .form-section__title { color: var(--brand); font-size: .82rem; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
 .form-section__note { margin-top: 6px; color: var(--muted); line-height: 1.6; font-size: .93rem; }
 .form-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+/* Let columns shrink below long unbroken text / intrinsic control widths (e.g. Start Date + Duration). */
+.form-row > label {
+  min-width: 0;
+}
+.form-row--project-start-duration {
+  align-items: start;
+}
+.form-row--project-start-duration > label:last-child input[type="text"] {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .form-row--triple { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .form-actions, .toolbar, .pagination, .pagination__actions, .action-set, .modal-card__header { display: flex; gap: 10px; }
 .form-actions, .pagination { justify-content: space-between; align-items: center; }
