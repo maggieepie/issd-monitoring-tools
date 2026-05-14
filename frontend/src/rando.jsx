@@ -232,7 +232,16 @@ function App() {
       </div>
     </>
   );
-  const pager = (page, pages, total, setPage) => <div className="pagination"><span>Showing {total ? (page - 1) * PAGE + 1 : 0}-{Math.min(page * PAGE, total)} of {total}</span><div className="pagination__actions"><button type="button" className="ghost-button" disabled={page === 1} onClick={() => setPage(page - 1)}>Previous</button><strong>Page {page} of {pages}</strong><button type="button" className="ghost-button" disabled={page === pages} onClick={() => setPage(page + 1)}>Next</button></div></div>;
+  const pager = (page, pages, total, setPage) => (
+    <div className="pagination">
+      <span className="pagination__summary">Showing {total ? (page - 1) * PAGE + 1 : 0}-{Math.min(page * PAGE, total)} of {total}</span>
+      <strong className="pagination__status">Page {page} of {pages}</strong>
+      <div className="pagination__nav">
+        <button type="button" className="ghost-button" disabled={page === 1} onClick={() => setPage(page - 1)}>Previous</button>
+        <button type="button" className="ghost-button" disabled={page === pages} onClick={() => setPage(page + 1)}>Next</button>
+      </div>
+    </div>
+  );
   const open = (type, title, rows) => setModal({ type, title, rows });
   const openLandingPanel = (key) => {
     setLandingModal(LANDING_PANELS[key]);

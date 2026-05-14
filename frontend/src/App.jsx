@@ -365,6 +365,7 @@ function App() {
   const [activeFaq, setActiveFaq] = useState(FAQ_ITEMS[0].id);
   const [theme, setTheme] = useState(() => localStorage.getItem("monitoring-theme") || "light");
   const [dense] = useState(() => localStorage.getItem("monitoring-density") === "dense");
+  const [sidebarNavOpen, setSidebarNavOpen] = useState(true);
   const [projects, setProjects] = useState([]);
   const [payments, setPayments] = useState([]);
   const [outgoing, setOutgoing] = useState([]);
@@ -827,7 +828,16 @@ function App() {
       </div>
     </>
   );
-  const pager = (page, pages, total, setPage) => <div className="pagination"><span>Showing {total ? (page - 1) * PAGE + 1 : 0}-{Math.min(page * PAGE, total)} of {total}</span><div className="pagination__actions"><button type="button" className="ghost-button" disabled={page === 1} onClick={() => setPage(page - 1)}>Previous</button><strong>Page {page} of {pages}</strong><button type="button" className="ghost-button" disabled={page === pages} onClick={() => setPage(page + 1)}>Next</button></div></div>;
+  const pager = (page, pages, total, setPage) => (
+    <div className="pagination">
+      <span className="pagination__summary">Showing {total ? (page - 1) * PAGE + 1 : 0}-{Math.min(page * PAGE, total)} of {total}</span>
+      <strong className="pagination__status">Page {page} of {pages}</strong>
+      <div className="pagination__nav">
+        <button type="button" className="ghost-button" disabled={page === 1} onClick={() => setPage(page - 1)}>Previous</button>
+        <button type="button" className="ghost-button" disabled={page === pages} onClick={() => setPage(page + 1)}>Next</button>
+      </div>
+    </div>
+  );
   const open = (type, title, rows) => setModal({ type, title, rows });
   const openLandingPanel = (key) => {
     setLandingModal(LANDING_PANELS[key]);
@@ -969,22 +979,58 @@ function App() {
   }
 
   return (
-    <div className="workspace-shell">
-      <aside className="sidebar">
-        <div className="brand-block"><button type="button" className="brand-mark-button" aria-label="Return to landing page" onClick={() => setStarted(false)}><img src={SIDEBAR_LOGO_IMAGE} alt="SSS logo" className="brand-mark" /></button><div><p className="brand-eyebrow">ISSD Monitoring</p><h1>Operations Hub</h1></div></div>
-        <nav className="sidebar-nav">
-          {NAV.map((item) => (
-            <button key={item.id} type="button" className={`nav-button ${view === item.id ? "is-active" : ""}`} onClick={() => setView(item.id)}>
-              <span className="nav-button__icon" aria-hidden="true"><SidebarNavIcon name={item.icon} /></span>
-              <span className="nav-button__label">{item.label}</span>
-            </button>
-          ))}
-        </nav>
-        <button type="button" className="sidebar-return" onClick={() => setStarted(false)}>Return to landing page</button>
+    <div className={`workspace-shell${sidebarNavOpen ? "" : " workspace-shell--sidebar-collapsed"}`}>
+      <aside id="workspace-sidebar" className="sidebar">
+        <div className="sidebar-header-row">
+          <button
+            type="button"
+            className="icon-button sidebar-menu-toggle"
+            aria-label={sidebarNavOpen ? "Collapse Operations Hub navigation" : "Expand Operations Hub navigation"}
+            aria-expanded={sidebarNavOpen}
+            aria-controls="workspace-sidebar-nav"
+            title="Open or close navigation"
+            onClick={() => setSidebarNavOpen((v) => !v)}
+          >
+            <SidebarHamburgerIcon />
+          </button>
+          <button
+            type="button"
+            className="icon-button sidebar-theme-toggle"
+            tabIndex={sidebarNavOpen ? undefined : -1}
+            aria-label={theme === "light" ? "Enable dark mode" : "Enable light mode"}
+            title={theme === "light" ? "Enable dark mode" : "Enable light mode"}
+            onClick={() => setTheme((x) => (x === "light" ? "dark" : "light"))}
+          >
+            <ThemeIcon theme={theme} />
+          </button>
+        </div>
+        <div className="sidebar-body" inert={!sidebarNavOpen ? true : undefined}>
+          <div className="brand-block">
+            <button type="button" className="brand-mark-button" aria-label="Return to landing page" onClick={() => setStarted(false)}><img src={SIDEBAR_LOGO_IMAGE} alt="SSS logo" className="brand-mark" /></button>
+            <div>
+              <p className="brand-eyebrow">ISSD Monitoring</p>
+              <h1>Operations Hub</h1>
+            </div>
+          </div>
+          <nav id="workspace-sidebar-nav" className="sidebar-nav" aria-label="Operations Hub views">
+            {NAV.map((item) => (
+              <button key={item.id} type="button" className={`nav-button ${view === item.id ? "is-active" : ""}`} onClick={() => setView(item.id)}>
+                <span className="nav-button__icon" aria-hidden="true"><SidebarNavIcon name={item.icon} /></span>
+                <span className="nav-button__label">{item.label}</span>
+              </button>
+            ))}
+          </nav>
+          <button type="button" className="sidebar-return" onClick={() => setStarted(false)}>Return to landing page</button>
+        </div>
       </aside>
 
       <main className="workspace">
-        <header className="topbar"><div><p className="topbar__eyebrow">Monitoring System</p><h2>{currentViewMeta.title}</h2></div><div className="topbar-actions"><button type="button" className="icon-button" aria-label={theme === "light" ? "Enable dark mode" : "Enable light mode"} title={theme === "light" ? "Enable dark mode" : "Enable light mode"} onClick={() => setTheme((x) => x === "light" ? "dark" : "light")}><ThemeIcon theme={theme} /></button></div></header>
+        <header className="topbar">
+          <div className="topbar__titles">
+            <p className="topbar__eyebrow">Monitoring System</p>
+            <h2>{currentViewMeta.title}</h2>
+          </div>
+        </header>
 
         {view === "projects" && (
         <section className="page tool-page">
@@ -1542,6 +1588,13 @@ function GoodsTrashIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M9.25 10v8.5M14.75 10v8.5M5.75 10h12.5l-.75 9h-11l-.75-9ZM9.25 10V7a1 1 0 011-1h3.5a1 1 0 011 1v3M4 10h16" />
+    </svg>
+  );
+}
+function SidebarHamburgerIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" width="22" height="22" fill="none">
+      <path d="M5 7h14M5 12h14M5 17h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
     </svg>
   );
 }
