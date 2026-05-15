@@ -104,8 +104,98 @@ const ICTSSD = ["Signed", "Receive", "Pending"];
 const GAD = ["Pending", "Signed", "Unsigned", "Return"];
 const CASH = ["Received", "Return"];
 const PAYMENT_FILTERS = ["All", "Signed", "Receive", "Received", "Pending", "Unsigned", "Return"];
-const THRU = ["NCD", "ITMG", "BAC", "PMO", "PSD", "PCEO"];
-const FOR = ["SSC", "PCEO", "NCD", "ITMG", "BAC", "PMO", "PSD", "PPMD", "BUDGET", "LEGAL", "ESD", "OPSD", "PMERD", "LDD"];
+const BASE_THRU = ["NCD", "ITMG", "BAC", "PMO", "PSD", "PCEO"];
+const BASE_FOR = ["SSC", "PCEO", "NCD", "ITMG", "BAC", "PMO", "PSD", "PPMD", "BUDGET", "LEGAL", "ESD", "OPSD", "PMERD", "LDD"];
+/** Hard cap for department name (Thru / For lists; Oracle NAME is VARCHAR2(100)). */
+const MAX_DEPARTMENT_NAME_LENGTH = 100;
+
+function mergeDepartmentOptions(baseList, dbDepartments, kind, records, recordKey) {
+  const seen = new Set();
+  const out = [];
+  const push = (name) => {
+    const t = String(name ?? "").trim();
+    if (!t) return;
+    const k = t.toLowerCase();
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push(t);
+  };
+  baseList.forEach(push);
+  for (const d of dbDepartments) {
+    if (d.kind === kind) push(d.name);
+  }
+  for (const r of records) push(r[recordKey]);
+  return out;
+}
+
+function DeptSelectWithAdd({
+  label,
+  id,
+  value,
+  onChange,
+  options,
+  addVisible,
+  onAddOpen,
+  onAddCancel,
+  addDraft,
+  onAddDraftChange,
+  addError,
+  onAddCommit,
+  addAriaLabel,
+}) {
+  return (
+    <div className="form-label-with-action">
+      <div className="form-label-with-action__row">
+        <label className="form-label-with-action__text" htmlFor={id}><span>{label}</span></label>
+        {addVisible ? (
+          <button type="button" className="goods-cancel-btn" aria-label="Cancel" onClick={onAddCancel}>
+            <span className="goods-btn__icon">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <line x1="4" y1="4" x2="12" y2="12" />
+                <line x1="12" y1="4" x2="4" y2="12" />
+              </svg>
+            </span>
+            <span className="goods-btn__label">Cancel</span>
+          </button>
+        ) : (
+          <button type="button" className="goods-add-btn" aria-label={addAriaLabel} onClick={onAddOpen}>
+            <span className="goods-btn__icon">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <line x1="8" y1="2" x2="8" y2="14" />
+                <line x1="2" y1="8" x2="14" y2="8" />
+              </svg>
+            </span>
+            <span className="goods-btn__label">Add</span>
+          </button>
+        )}
+      </div>
+      <select id={id} value={value} onChange={onChange}>
+        {options.map((o) => <option key={o}>{o}</option>)}
+      </select>
+      {addVisible ? (
+        <div className="form-inline-add-goods">
+          <input
+            type="text"
+            autoComplete="off"
+            value={addDraft}
+            onChange={(e) => onAddDraftChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void onAddCommit();
+              }
+            }}
+            placeholder={`New ${label.toLowerCase()} department`}
+            aria-label={`Add ${label} department`}
+          />
+          <button type="button" className="ghost-button ghost-button--compact" onClick={() => void onAddCommit()}>Save</button>
+          <button type="button" className="ghost-button ghost-button--compact" onClick={onAddCancel}>Cancel</button>
+        </div>
+      ) : null}
+      {addError ? <p className="form-field-warning form-field-warning--tight" role="alert">{addError}</p> : null}
+    </div>
+  );
+}
 
 /** Hard cap for contract title (UI + API; Oracle CONTRACT_NAME remains VARCHAR2(500)). */
 const MAX_PROJECT_CONTRACT_NAME_LENGTH = 175;
@@ -115,6 +205,12 @@ const MAX_DV_TITLE_LENGTH = 150;
 const MAX_DV_CLAIMANT_LENGTH = 500;
 /** Hard cap for DV voucher number — numbers only, max 20 digits. */
 const MAX_DV_VOUCHER_LENGTH = 20;
+/** Hard cap for outgoing memo subject (UI + API). */
+const MAX_OUTGOING_SUBJECT_LENGTH = 500;
+/** Hard cap for outgoing memo number — letters, digits, and hyphens only. */
+const MAX_OUTGOING_MEMO_NO_LENGTH = 20;
+const OUTGOING_MEMO_NO_ALLOWED = /[^A-Za-z0-9-]/g;
+const OUTGOING_MEMO_NO_DISALLOWED = /[^A-Za-z0-9-]/;
 /** Hard cap for duration text (UI + API; Oracle DURATION remains VARCHAR2(200)). */
 const MAX_PROJECT_DURATION_LENGTH = 30;
 
@@ -223,6 +319,10 @@ function projectMoneyDisplayToNumber(display) {
   if (!s || s === ".") return 0;
   const n = Number(s);
   return Number.isFinite(n) ? n : 0;
+}
+
+function projectMoneyExceedsOracleMax(display) {
+  return projectMoneyParseState(display).digitLimitExceeded;
 }
 
 /** @returns {{ display: string, hadInvalidChars: boolean, digitLimitExceeded: boolean }} */
@@ -378,6 +478,9 @@ function App() {
   const [outgoingForm, setOutgoingForm] = useState(blankOutgoing);
   const [projectEdit, setProjectEdit] = useState(null);
   const [paymentEdit, setPaymentEdit] = useState(null);
+  const [paymentEditModal, setPaymentEditModal] = useState(false);
+  const [paymentEditForm, setPaymentEditForm] = useState(blankPayment);
+  const [paymentSaving, setPaymentSaving] = useState(false);
   const [outgoingEdit, setOutgoingEdit] = useState(null);
   const [projectSearch, setProjectSearch] = useState("");
   const [paymentSearch, setPaymentSearch] = useState("");
@@ -394,6 +497,19 @@ function App() {
   const [paymentsLoading, setPaymentsLoading] = useState(false);
   const [paymentLoadError, setPaymentLoadError] = useState("");
   const [paymentSaveError, setPaymentSaveError] = useState("");
+  const [outgoingLoading, setOutgoingLoading] = useState(false);
+  const [outgoingLoadError, setOutgoingLoadError] = useState("");
+  const [outgoingSaveError, setOutgoingSaveError] = useState("");
+  const [outgoingSaving, setOutgoingSaving] = useState(false);
+  const [outgoingSubjectWarning, setOutgoingSubjectWarning] = useState(false);
+  const [outgoingMemoNoWarning, setOutgoingMemoNoWarning] = useState({ invalidChars: false, maxLength: false });
+  const [departments, setDepartments] = useState([]);
+  const [thruAddVisible, setThruAddVisible] = useState(false);
+  const [thruAddDraft, setThruAddDraft] = useState("");
+  const [thruAddError, setThruAddError] = useState("");
+  const [forAddVisible, setForAddVisible] = useState(false);
+  const [forAddDraft, setForAddDraft] = useState("");
+  const [forAddError, setForAddError] = useState("");
   const [dvTitleWarning, setDvTitleWarning] = useState(false);
   const [dvClaimantWarning, setDvClaimantWarning] = useState(false);
   const [dvVoucherWarning, setDvVoucherWarning] = useState({ nonNumeric: false, maxLength: false });
@@ -418,6 +534,16 @@ function App() {
     setGoodsRenameError("");
     setGoodsSelectError("");
     setProjectSaveError("");
+  };
+  const closePaymentEditModal = () => {
+    setPaymentEditModal(false);
+    setPaymentEdit(null);
+    setPaymentEditForm(blankPayment);
+    setDvTitleWarning(false);
+    setDvClaimantWarning(false);
+    setDvVoucherWarning({ nonNumeric: false, maxLength: false });
+    setDvAmountWarning({ invalidChars: false, maxDigits: false });
+    setPaymentSaveError("");
   };
   const currentViewMeta = VIEW_META[view];
 
@@ -621,6 +747,16 @@ function App() {
     return outgoing.filter((x) => (!q || `${x.subject} ${x.memoNo} ${x.forDept}`.toLowerCase().includes(q)) && (outgoingFilter === "All" || x.forDept === outgoingFilter));
   }, [outgoing, outgoingSearch, outgoingFilter]);
 
+  const thruDeptOptions = useMemo(
+    () => mergeDepartmentOptions(BASE_THRU, departments, "thru", outgoing, "thru"),
+    [departments, outgoing],
+  );
+  const forDeptOptions = useMemo(
+    () => mergeDepartmentOptions(BASE_FOR, departments, "for", outgoing, "forDept"),
+    [departments, outgoing],
+  );
+  const forDeptFilterOptions = useMemo(() => ["All", ...forDeptOptions], [forDeptOptions]);
+
   const projectPages = Math.ceil(projectRows.length / PAGE) || 1;
   const paymentPages = Math.ceil(paymentRows.length / PAGE) || 1;
   const outgoingPages = Math.ceil(outgoingRows.length / PAGE) || 1;
@@ -764,6 +900,49 @@ function App() {
     return () => { cancelled = true; };
   }, [started, view]);
 
+  useEffect(() => {
+    if (!started || view !== "outgoing") return undefined;
+    let cancelled = false;
+    (async () => {
+      setOutgoingLoading(true);
+      setOutgoingLoadError("");
+      try {
+        const res = await fetch("/api/outgoing");
+        const raw = await res.text();
+        let data;
+        try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
+        if (!res.ok) throw new Error((data && data.message) || raw || "Failed to load outgoing records");
+        if (!cancelled) setOutgoing(Array.isArray(data) ? data : []);
+      } catch (e) {
+        if (!cancelled) {
+          setOutgoingLoadError(e instanceof Error ? e.message : String(e));
+          setOutgoing([]);
+        }
+      } finally {
+        if (!cancelled) setOutgoingLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [started, view]);
+
+  useEffect(() => {
+    if (!started) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/departments");
+        const raw = await res.text();
+        let data;
+        try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
+        if (!res.ok) throw new Error((data && data.message) || raw || "Failed to load departments");
+        if (!cancelled) setDepartments(Array.isArray(data) ? data : []);
+      } catch {
+        if (!cancelled) setDepartments([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [started]);
+
   const deleteProjectRow = async (id, title) => {
     await new Promise((resolve) => setConfirmModal({ title, onConfirm: resolve }));
     setConfirmModal(null);
@@ -786,17 +965,44 @@ function App() {
     }
   };
 
+  const deleteOutgoingRow = async (id, title) => {
+    await new Promise((resolve) => setConfirmModal({ title, onConfirm: resolve }));
+    setConfirmModal(null);
+    setOutgoingSaveError("");
+    try {
+      const res = await fetch(`/api/outgoing/${id}`, { method: "DELETE" });
+      if (!res.ok && res.status !== 204) {
+        const raw = await res.text();
+        let msg;
+        try {
+          msg = raw ? JSON.parse(raw).message : null;
+        } catch {
+          msg = raw;
+        }
+        throw new Error(msg || "Delete failed");
+      }
+      setOutgoing((cur) => cur.filter((item) => item.id !== id));
+      if (outgoingEdit === id) {
+        setOutgoingEdit(null);
+        setOutgoingForm(blankOutgoing);
+        setOutgoingSubjectWarning(false);
+        setOutgoingMemoNoWarning({ invalidChars: false, maxLength: false });
+      }
+    } catch (e) {
+      setOutgoingSaveError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const saveProject = async (e) => {
     e.preventDefault();
     const src = projectEdit != null ? editForm : projectForm;
     if (!src.contractName || !src.date || !src.duration) return;
-    const amount = projectMoneyDisplayToNumber(src.amount);
-    const outstanding = projectMoneyDisplayToNumber(src.outstanding);
-    const MAX_ORACLE_VALUE = 9999999999999999.99;
-    if (amount > MAX_ORACLE_VALUE || outstanding > MAX_ORACLE_VALUE) {
+    if (projectMoneyExceedsOracleMax(src.amount) || projectMoneyExceedsOracleMax(src.outstanding)) {
       setProjectSaveError("Amount values exceed the maximum allowed (16 digits before decimal).");
       return;
     }
+    const amount = projectMoneyDisplayToNumber(src.amount);
+    const outstanding = projectMoneyDisplayToNumber(src.outstanding);
     setProjectSaving(true);
     setProjectSaveError("");
     const body = {
@@ -853,34 +1059,92 @@ function App() {
       claimantAddress: paymentForm.claimantAddress.trim(),
       voucherNo: paymentForm.voucherNo.trim(),
       amount: projectMoneyDisplayToNumber(paymentForm.amount),
-      date: paymentForm.date?.trim() || (paymentEdit != null ? payments.find((x) => x.id === paymentEdit)?.date : null) || todayStr,
+      date: paymentForm.date?.trim() || todayStr,
       ictssd: paymentForm.ictssd,
       gad: paymentForm.gad,
       cash: paymentForm.cash,
     };
     setPaymentSaveError("");
     try {
-      const url = paymentEdit != null ? `/api/dv-payments/${paymentEdit}` : "/api/dv-payments";
-      const method = paymentEdit != null ? "PUT" : "POST";
-      const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const res = await fetch("/api/dv-payments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const raw = await res.text();
       let data;
       try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
       if (!res.ok) throw new Error((data && data.message) || raw || "Save failed");
       const saved = data;
-      setPayments((cur) => paymentEdit != null ? cur.map((x) => (x.id === paymentEdit ? saved : x)) : [saved, ...cur]);
+      setPayments((cur) => [saved, ...cur]);
       setPaymentForm(blankPayment);
-      setPaymentEdit(null);
     } catch (err) {
       setPaymentSaveError(err instanceof Error ? err.message : String(err));
     }
   };
-  const saveOutgoing = (e) => {
+  const savePaymentEdit = async (e) => {
+    e.preventDefault();
+    if (paymentEdit == null) return;
+    if (!paymentEditForm.title || !paymentEditForm.claimantAddress || !paymentEditForm.voucherNo) return;
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const body = {
+      title: paymentEditForm.title.trim(),
+      claimantAddress: paymentEditForm.claimantAddress.trim(),
+      voucherNo: paymentEditForm.voucherNo.trim(),
+      amount: projectMoneyDisplayToNumber(paymentEditForm.amount),
+      date: paymentEditForm.date?.trim() || payments.find((x) => x.id === paymentEdit)?.date || todayStr,
+      ictssd: paymentEditForm.ictssd,
+      gad: paymentEditForm.gad,
+      cash: paymentEditForm.cash,
+    };
+    setPaymentSaving(true);
+    setPaymentSaveError("");
+    try {
+      const res = await fetch(`/api/dv-payments/${paymentEdit}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const raw = await res.text();
+      let data;
+      try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
+      if (!res.ok) throw new Error((data && data.message) || raw || "Save failed");
+      const saved = data;
+      setPayments((cur) => cur.map((x) => (x.id === paymentEdit ? saved : x)));
+      closePaymentEditModal();
+    } catch (err) {
+      setPaymentSaveError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPaymentSaving(false);
+    }
+  };
+  const saveOutgoing = async (e) => {
     e.preventDefault();
     if (!outgoingForm.subject || !outgoingForm.memoNo || !outgoingForm.date) return;
-    const rec = { id: outgoingEdit ?? Date.now(), subject: outgoingForm.subject.trim(), memoNo: outgoingForm.memoNo.trim(), date: outgoingForm.date, thru: outgoingForm.thru, forDept: outgoingForm.forDept };
-    setOutgoing((cur) => outgoingEdit ? cur.map((x) => (x.id === outgoingEdit ? rec : x)) : [rec, ...cur]);
-    setOutgoingForm(blankOutgoing); setOutgoingEdit(null);
+    const body = {
+      subject: outgoingForm.subject.trim().slice(0, MAX_OUTGOING_SUBJECT_LENGTH),
+      memoNo: outgoingForm.memoNo.trim().replace(OUTGOING_MEMO_NO_ALLOWED, "").slice(0, MAX_OUTGOING_MEMO_NO_LENGTH),
+      date: outgoingForm.date,
+      thru: outgoingForm.thru,
+      forDept: outgoingForm.forDept,
+    };
+    setOutgoingSaving(true);
+    setOutgoingSaveError("");
+    try {
+      const url = outgoingEdit != null ? `/api/outgoing/${outgoingEdit}` : "/api/outgoing";
+      const method = outgoingEdit != null ? "PUT" : "POST";
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const raw = await res.text();
+      let data;
+      try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
+      if (!res.ok) throw new Error((data && data.message) || raw || "Save failed");
+      const saved = data;
+      setOutgoing((cur) => (outgoingEdit != null ? cur.map((x) => (x.id === outgoingEdit ? saved : x)) : [saved, ...cur]));
+      setOutgoingForm(blankOutgoing);
+      setOutgoingEdit(null);
+      setOutgoingSubjectWarning(false);
+      setOutgoingMemoNoWarning({ invalidChars: false, maxLength: false });
+    } catch (err) {
+      setOutgoingSaveError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setOutgoingSaving(false);
+    }
   };
 
   const toolbar = (title, desc, search, setSearch, filter, setFilter, options, label, onExport) => (
@@ -911,6 +1175,100 @@ function App() {
   const projectExport = () => exportCsv("project-monitoring.csv", [["Name of Contract", "Start Date", "End Date", "Duration", "Kind of Goods", "Amount of Contract", "Outstanding Value"], ...projectRows.map((x) => [x.contractName, x.date, projectComputedEndDateYmd(x.date, x.duration) || "", x.duration, x.goods, x.amount, x.outstanding])]);
   const paymentExport = () => exportCsv("dv-payment-monitoring.csv", [["Title of the Project", "Name and Address of Claimant", "Voucher No.", "Date", "Amount", "ICTSSD", "GAD", "CASH"], ...paymentRows.map((x) => [x.title, x.claimantAddress, x.voucherNo, x.date || "", x.amount, x.ictssd, x.gad, x.cash])]);
   const outgoingExport = () => exportCsv("issd-outgoing-monitoring.csv", [["Subject", "Memo Number", "Date", "Thru", "For"], ...outgoingRows.map((x) => [x.subject, x.memoNo, x.date, x.thru, x.forDept])]);
+
+  const commitDepartmentAdd = async (kind, draft, options, formField, setError, setVisible, setDraft) => {
+    const t = draft.trim().slice(0, MAX_DEPARTMENT_NAME_LENGTH);
+    if (!t) {
+      setError("Enter a name.");
+      return;
+    }
+    if (options.some((x) => x.toLowerCase() === t.toLowerCase())) {
+      setError("That department is already listed.");
+      return;
+    }
+    setError("");
+    try {
+      const res = await fetch("/api/departments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: t, kind }),
+      });
+      const raw = await res.text();
+      let data;
+      try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
+      if (!res.ok) throw new Error((data && data.message) || raw || "Save failed");
+      setDepartments((cur) => [...cur, data]);
+      setOutgoingForm((f) => ({ ...f, [formField]: t }));
+      setDraft("");
+      setVisible(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const outgoingDeptPickers = (
+    <div className="form-row form-row--dept-pickers">
+      <DeptSelectWithAdd
+        label="Thru"
+        id="outgoing-thru-select"
+        value={outgoingForm.thru}
+        onChange={(e) => setOutgoingForm({ ...outgoingForm, thru: e.target.value })}
+        options={thruDeptOptions}
+        addVisible={thruAddVisible}
+        onAddOpen={() => {
+          setThruAddError("");
+          setThruAddDraft("");
+          setThruAddVisible(true);
+          setForAddVisible(false);
+          setForAddDraft("");
+          setForAddError("");
+        }}
+        onAddCancel={() => {
+          setThruAddVisible(false);
+          setThruAddDraft("");
+          setThruAddError("");
+        }}
+        addDraft={thruAddDraft}
+        onAddDraftChange={(v) => {
+          setThruAddDraft(v.slice(0, MAX_DEPARTMENT_NAME_LENGTH));
+          setThruAddError("");
+        }}
+        addError={thruAddError}
+        onAddCommit={() => void commitDepartmentAdd("thru", thruAddDraft, thruDeptOptions, "thru", setThruAddError, setThruAddVisible, setThruAddDraft)}
+        addAriaLabel="Add Thru department"
+      />
+      <DeptSelectWithAdd
+        label="For"
+        id="outgoing-for-select"
+        value={outgoingForm.forDept}
+        onChange={(e) => setOutgoingForm({ ...outgoingForm, forDept: e.target.value })}
+        options={forDeptOptions}
+        addVisible={forAddVisible}
+        onAddOpen={() => {
+          setForAddError("");
+          setForAddDraft("");
+          setForAddVisible(true);
+          setThruAddVisible(false);
+          setThruAddDraft("");
+          setThruAddError("");
+        }}
+        onAddCancel={() => {
+          setForAddVisible(false);
+          setForAddDraft("");
+          setForAddError("");
+        }}
+        addDraft={forAddDraft}
+        onAddDraftChange={(v) => {
+          setForAddDraft(v.slice(0, MAX_DEPARTMENT_NAME_LENGTH));
+          setForAddError("");
+        }}
+        addError={forAddError}
+        onAddCommit={() => void commitDepartmentAdd("for", forAddDraft, forDeptOptions, "forDept", setForAddError, setForAddVisible, setForAddDraft)}
+        addAriaLabel="Add For department"
+      />
+    </div>
+  );
+
   const summaryExport = () => exportCsv("monitoring-summary.csv", [
     ["Metric", "Value", "Supporting Text"],
     ["Total Projects", stats.totalProjects, `${stats.pendingProjects} with outstanding balances`],
@@ -1137,10 +1495,10 @@ function App() {
                   setGoodsRenameError("");
                   setGoodsSelectError("");
                   setProjectSaveError("");
-                }}>Clear form</button></div></form></section><section className="panel table-panel">{toolbar("Project records", "Search, filter, and export contract monitoring data.", projectSearch, setProjectSearch, projectFilter, setProjectFilter, goodsFilterOptions, "Goods", projectExport)}<div className="table-wrap"><table><thead><tr><th>Name of Contract</th><th>Start Date</th><th>End Date</th><th>Duration</th><th>Kind of Goods</th><th>Amount of Contract</th><th>Outstanding Value</th><th>Actions</th></tr></thead><tbody>{projectsLoading ? <tr><td colSpan={8}>Loading projects…</td></tr> : pageSlice(projectRows, safeProjectPage).map((x) => <tr key={x.id}><td>{x.contractName}</td><td>{fmtDate(x.date)}</td><td>{formatProjectEndDateLabel(x.date, x.duration)}</td><td>{x.duration}</td><td>{x.goods}</td><td>{peso.format(x.amount)}</td><td>{peso.format(x.outstanding)}</td><td><ActionSet onView={() => open("Project", x.contractName, [["Start Date", fmtDate(x.date)], ["End Date", formatProjectEndDateLabel(x.date, x.duration)], ["Duration", x.duration], ["Kind of Goods", x.goods], ["Amount of Contract", peso.format(x.amount)], ["Outstanding Value", peso.format(x.outstanding)]])} onEdit={() => { setProjectEdit(x.id); const cn = String(x.contractName ?? ""); setEditMoneyWarnings({ ...blankProjectMoneyWarnings, contractName: { maxLength: false } }); setGoodsAddVisible(false); setGoodsAddDraft(""); setGoodsAddError(""); setGoodsRenameVisible(false); setGoodsRenameDraft(""); setGoodsRenameError(""); setGoodsSelectError(""); setEditForm({ contractName: cn.slice(0, MAX_PROJECT_CONTRACT_NAME_LENGTH), date: x.date, duration: String(x.duration ?? "").slice(0, MAX_PROJECT_DURATION_LENGTH), goods: x.goods, amount: projectMoneyFromNumber(x.amount), outstanding: projectMoneyFromNumber(x.outstanding) }); setEditModal(true); }} onDelete={() => void deleteProjectRow(x.id, x.contractName)} /></td></tr>)}</tbody></table></div>{pager(safeProjectPage, projectPages, projectRows.length, setProjectPage)}</section></div></section>)}
-        {view === "payments" && <section className="page tool-page"><div className="tool-layout">{(paymentLoadError || paymentSaveError) && <div role="alert" style={{background:"#fee2e2",color:"#991b1b",padding:"14px 18px",borderRadius:"14px",fontSize:".93rem"}}>{paymentLoadError || paymentSaveError}</div>}<section className="panel metric-panel"><div className="metric-section"><div className="inline-stat-grid"><MetricChip label="Total DV" value={number.format(payments.length)} /><MetricChip label="Total amount" value={peso.format(stats.totalVoucherValue)} /><MetricChip label="Status alerts" value={number.format(stats.pendingPayments)} /></div></div></section><section className="panel form-panel"><div className="panel__header"><div><p className="panel__kicker">DV Payment Monitoring Tool</p><h3>{paymentEdit ? "Edit voucher record" : "Add new DV record"}</h3></div></div><form className="record-form" onSubmit={savePayment}><label><span>Title of the Project *</span><input type="text" autoComplete="off" value={paymentForm.title} onChange={(e) => { const raw = e.target.value; const capped = raw.slice(0, MAX_DV_TITLE_LENGTH); setPaymentForm({ ...paymentForm, title: capped }); setDvTitleWarning(raw.length > MAX_DV_TITLE_LENGTH); }} onBlur={() => setDvTitleWarning(false)} placeholder="Enter project title" aria-invalid={dvTitleWarning} /><div className="form-field-warning-slot">{dvTitleWarning ? <p className="form-field-warning" role="alert">{`At most ${MAX_DV_TITLE_LENGTH} characters are allowed.`}</p> : null}</div></label><label><span>Name and Address of Claimant</span><textarea value={paymentForm.claimantAddress} onChange={(e) => { const raw = e.target.value; const capped = raw.slice(0, MAX_DV_CLAIMANT_LENGTH); setPaymentForm({ ...paymentForm, claimantAddress: capped }); setDvClaimantWarning(raw.length > MAX_DV_CLAIMANT_LENGTH); }} onBlur={() => setDvClaimantWarning(false)} placeholder="Enter claimant name and address" aria-invalid={dvClaimantWarning} /><div className="form-field-warning-slot">{dvClaimantWarning ? <p className="form-field-warning" role="alert">{`At most ${MAX_DV_CLAIMANT_LENGTH} characters are allowed.`}</p> : null}</div></label><div className="form-row"><label><span>Voucher No.</span><input type="text" inputMode="numeric" autoComplete="off" value={paymentForm.voucherNo} onChange={(e) => { const raw = e.target.value; const digitsOnly = raw.replace(/\D/g, ""); const capped = digitsOnly.slice(0, MAX_DV_VOUCHER_LENGTH); setPaymentForm({ ...paymentForm, voucherNo: capped }); setDvVoucherWarning({ nonNumeric: /\D/.test(raw), maxLength: digitsOnly.length > MAX_DV_VOUCHER_LENGTH }); }} onBlur={() => setDvVoucherWarning({ nonNumeric: false, maxLength: false })} placeholder="Enter voucher number" aria-invalid={dvVoucherWarning.nonNumeric || dvVoucherWarning.maxLength} /><div className="form-field-warning-slot">{(dvVoucherWarning.nonNumeric || dvVoucherWarning.maxLength) ? <p className="form-field-warning" role="alert">{dvVoucherWarning.nonNumeric ? "Numbers only. " : null}{dvVoucherWarning.maxLength ? `At most ${MAX_DV_VOUCHER_LENGTH} digits are allowed.` : null}</p> : null}</div></label><label><span>Amount</span><input type="text" inputMode="decimal" autoComplete="off" value={paymentForm.amount} onChange={(e) => { const st = projectMoneyParseState(e.target.value); setPaymentForm({ ...paymentForm, amount: st.display }); setDvAmountWarning({ invalidChars: st.hadInvalidChars, maxDigits: st.digitLimitExceeded }); }} onBlur={() => setDvAmountWarning({ invalidChars: false, maxDigits: false })} placeholder="0.00" aria-invalid={dvAmountWarning.invalidChars || dvAmountWarning.maxDigits} /><div className="form-field-warning-slot">{(dvAmountWarning.invalidChars || dvAmountWarning.maxDigits) ? <p className="form-field-warning" role="alert">{dvAmountWarning.invalidChars ? "Only numbers, commas, and periods are allowed. " : null}{dvAmountWarning.maxDigits ? `At most ${MAX_PROJECT_MONEY_INT_DIGITS} integer digits and ${MAX_PROJECT_MONEY_FRAC_DIGITS} decimal places are allowed.` : null}</p> : null}</div></label><label><span>Record date</span><input type="date" title="Choose a date using the calendar" value={paymentForm.date} onKeyDown={blockDateFieldDirectEntry} onPaste={(e) => e.preventDefault()} onCut={(e) => e.preventDefault()} onChange={(e) => setPaymentForm({ ...paymentForm, date: e.target.value })} /><div className="form-field-warning-slot" /></label></div><div className="form-row form-row--triple"><label><span>ICTSSD (Department)</span><select value={paymentForm.ictssd} onChange={(e) => setPaymentForm({ ...paymentForm, ictssd: e.target.value })}>{ICTSSD.map((o) => <option key={o}>{o}</option>)}</select><div className="form-field-warning-slot" /></label><label><span>GAD (Department)</span><select value={paymentForm.gad} onChange={(e) => setPaymentForm({ ...paymentForm, gad: e.target.value })}>{GAD.map((o) => <option key={o}>{o}</option>)}</select><div className="form-field-warning-slot" /></label><label><span>CASH (Department)</span><select value={paymentForm.cash} onChange={(e) => setPaymentForm({ ...paymentForm, cash: e.target.value })}>{CASH.map((o) => <option key={o}>{o}</option>)}</select><div className="form-field-warning-slot" /></label></div><div className="form-actions"><button type="submit" className="primary-button">{paymentEdit ? "Save voucher" : "Add DV record"}</button><button type="button" className="ghost-button" onClick={() => { setPaymentEdit(null); setPaymentForm(blankPayment); setPaymentSaveError(""); setDvTitleWarning(false); setDvClaimantWarning(false); setDvVoucherWarning({ nonNumeric: false, maxLength: false }); setDvAmountWarning({ invalidChars: false, maxDigits: false }); }}>Clear form</button></div>{paymentSaveError ? <p className="form-save-error" role="alert">{paymentSaveError}</p> : null}</form></section><section className="panel table-panel">{toolbar("DV payment records", "Track voucher workflow progress with clear department status indicators.", paymentSearch, setPaymentSearch, paymentFilter, setPaymentFilter, PAYMENT_FILTERS, "Status", paymentExport)}<div className="table-wrap"><table><thead><tr><th>Title of the Project</th><th>Name and Address of Claimant</th><th>Voucher No.</th><th>Date</th><th>Amount</th><th>ICTSSD</th><th>GAD</th><th>CASH</th><th>Actions</th></tr></thead><tbody>{paymentsLoading ? <tr><td colSpan={9}>Loading DV payments…</td></tr> : pageSlice(paymentRows, safePaymentPage).map((x) => <tr key={x.id}><td>{x.title}</td><td>{x.claimantAddress}</td><td>{x.voucherNo}</td><td>{fmtDate(x.date)}</td><td>{peso.format(x.amount)}</td><td><StatusBadge label={x.ictssd} /></td><td><StatusBadge label={x.gad} /></td><td><StatusBadge label={x.cash} /></td><td><ActionSet onView={() => open("DV Payment", x.voucherNo, [["Title of the Project", x.title], ["Name and Address of Claimant", x.claimantAddress], ["Voucher No.", x.voucherNo], ["Date", fmtDate(x.date)], ["Amount", peso.format(x.amount)], ["ICTSSD", x.ictssd], ["GAD", x.gad], ["CASH", x.cash]])} onEdit={() => { setPaymentEdit(x.id); setPaymentForm({ title: x.title, claimantAddress: x.claimantAddress, voucherNo: x.voucherNo, amount: String(x.amount), date: x.date || "", ictssd: x.ictssd, gad: x.gad, cash: x.cash }); }} onDelete={async () => { await new Promise((resolve) => setConfirmModal({ title: x.voucherNo, onConfirm: resolve })); setConfirmModal(null); try { const res = await fetch(`/api/dv-payments/${x.id}`, { method: "DELETE" }); if (!res.ok && res.status !== 204) { const t = await res.text(); setPaymentSaveError(t || "Delete failed"); return; } setPayments((cur) => cur.filter((item) => item.id !== x.id)); } catch (err) { setPaymentSaveError(err instanceof Error ? err.message : String(err)); } }} /></td></tr>)}</tbody></table></div>{pager(safePaymentPage, paymentPages, paymentRows.length, setPaymentPage)}</section></div></section>}
+                }}>Clear form</button></div></form></section><section className="panel table-panel">{toolbar("Project records", "Search, filter, and export contract monitoring data.", projectSearch, setProjectSearch, projectFilter, setProjectFilter, goodsFilterOptions, "Goods", projectExport)}<div className="table-wrap table-wrap--projects"><table><thead><tr><th>Name of Contract</th><th>Start Date</th><th>End Date</th><th>Duration</th><th>Kind of Goods</th><th>Amount of Contract</th><th>Outstanding Value</th><th>Actions</th></tr></thead><tbody>{projectsLoading ? <tr><td colSpan={8}>Loading projects…</td></tr> : pageSlice(projectRows, safeProjectPage).map((x) => <tr key={x.id}><td>{x.contractName}</td><td>{fmtDate(x.date)}</td><td>{formatProjectEndDateLabel(x.date, x.duration)}</td><td>{x.duration}</td><td>{x.goods}</td><td>{peso.format(x.amount)}</td><td>{peso.format(x.outstanding)}</td><td><ActionSet onView={() => open("Project", x.contractName, [["Start Date", fmtDate(x.date)], ["End Date", formatProjectEndDateLabel(x.date, x.duration)], ["Duration", x.duration], ["Kind of Goods", x.goods], ["Amount of Contract", peso.format(x.amount)], ["Outstanding Value", peso.format(x.outstanding)]])} onEdit={() => { setProjectEdit(x.id); const cn = String(x.contractName ?? ""); setEditMoneyWarnings({ ...blankProjectMoneyWarnings, contractName: { maxLength: false } }); setGoodsAddVisible(false); setGoodsAddDraft(""); setGoodsAddError(""); setGoodsRenameVisible(false); setGoodsRenameDraft(""); setGoodsRenameError(""); setGoodsSelectError(""); setEditForm({ contractName: cn.slice(0, MAX_PROJECT_CONTRACT_NAME_LENGTH), date: x.date, duration: String(x.duration ?? "").slice(0, MAX_PROJECT_DURATION_LENGTH), goods: x.goods, amount: projectMoneyFromNumber(x.amount), outstanding: projectMoneyFromNumber(x.outstanding) }); setEditModal(true); }} onDelete={() => void deleteProjectRow(x.id, x.contractName)} /></td></tr>)}</tbody></table></div>{pager(safeProjectPage, projectPages, projectRows.length, setProjectPage)}</section></div></section>)}
+        {view === "payments" && <section className="page tool-page"><div className="tool-layout">{(paymentLoadError || (paymentSaveError && !paymentEditModal)) && <div role="alert" style={{background:"#fee2e2",color:"#991b1b",padding:"14px 18px",borderRadius:"14px",fontSize:".93rem"}}>{paymentLoadError || paymentSaveError}</div>}<section className="panel metric-panel"><div className="metric-section"><div className="inline-stat-grid"><MetricChip label="Total DV" value={number.format(payments.length)} /><MetricChip label="Total amount" value={peso.format(stats.totalVoucherValue)} /><MetricChip label="Status alerts" value={number.format(stats.pendingPayments)} /></div></div></section><section className="panel form-panel"><div className="panel__header"><div><p className="panel__kicker">DV Payment Monitoring Tool</p><h3>Add new DV record</h3></div></div><form className="record-form" onSubmit={savePayment}><label><span>Title of the Project *</span><input type="text" autoComplete="off" value={paymentForm.title} onChange={(e) => { const raw = e.target.value; const capped = raw.slice(0, MAX_DV_TITLE_LENGTH); setPaymentForm({ ...paymentForm, title: capped }); setDvTitleWarning(raw.length > MAX_DV_TITLE_LENGTH); }} onBlur={() => setDvTitleWarning(false)} placeholder="Enter project title" aria-invalid={dvTitleWarning} /><div className="form-field-warning-slot">{dvTitleWarning ? <p className="form-field-warning" role="alert">{`At most ${MAX_DV_TITLE_LENGTH} characters are allowed.`}</p> : null}</div></label><label><span>Name and Address of Claimant</span><textarea value={paymentForm.claimantAddress} onChange={(e) => { const raw = e.target.value; const capped = raw.slice(0, MAX_DV_CLAIMANT_LENGTH); setPaymentForm({ ...paymentForm, claimantAddress: capped }); setDvClaimantWarning(raw.length > MAX_DV_CLAIMANT_LENGTH); }} onBlur={() => setDvClaimantWarning(false)} placeholder="Enter claimant name and address" aria-invalid={dvClaimantWarning} /><div className="form-field-warning-slot">{dvClaimantWarning ? <p className="form-field-warning" role="alert">{`At most ${MAX_DV_CLAIMANT_LENGTH} characters are allowed.`}</p> : null}</div></label><div className="form-row"><label><span>Voucher No.</span><input type="text" inputMode="numeric" autoComplete="off" value={paymentForm.voucherNo} onChange={(e) => { const raw = e.target.value; const digitsOnly = raw.replace(/\D/g, ""); const capped = digitsOnly.slice(0, MAX_DV_VOUCHER_LENGTH); setPaymentForm({ ...paymentForm, voucherNo: capped }); setDvVoucherWarning({ nonNumeric: /\D/.test(raw), maxLength: digitsOnly.length > MAX_DV_VOUCHER_LENGTH }); }} onBlur={() => setDvVoucherWarning({ nonNumeric: false, maxLength: false })} placeholder="Enter voucher number" aria-invalid={dvVoucherWarning.nonNumeric || dvVoucherWarning.maxLength} /><div className="form-field-warning-slot">{(dvVoucherWarning.nonNumeric || dvVoucherWarning.maxLength) ? <p className="form-field-warning" role="alert">{dvVoucherWarning.nonNumeric ? "Numbers only. " : null}{dvVoucherWarning.maxLength ? `At most ${MAX_DV_VOUCHER_LENGTH} digits are allowed.` : null}</p> : null}</div></label><label><span>Amount</span><input type="text" inputMode="decimal" autoComplete="off" value={paymentForm.amount} onChange={(e) => { const st = projectMoneyParseState(e.target.value); setPaymentForm({ ...paymentForm, amount: st.display }); setDvAmountWarning({ invalidChars: st.hadInvalidChars, maxDigits: st.digitLimitExceeded }); }} onBlur={() => setDvAmountWarning({ invalidChars: false, maxDigits: false })} placeholder="0.00" aria-invalid={dvAmountWarning.invalidChars || dvAmountWarning.maxDigits} /><div className="form-field-warning-slot">{(dvAmountWarning.invalidChars || dvAmountWarning.maxDigits) ? <p className="form-field-warning" role="alert">{dvAmountWarning.invalidChars ? "Only numbers, commas, and periods are allowed. " : null}{dvAmountWarning.maxDigits ? `At most ${MAX_PROJECT_MONEY_INT_DIGITS} integer digits and ${MAX_PROJECT_MONEY_FRAC_DIGITS} decimal places are allowed.` : null}</p> : null}</div></label><label><span>Record date</span><input type="date" title="Choose a date using the calendar" value={paymentForm.date} onKeyDown={blockDateFieldDirectEntry} onPaste={(e) => e.preventDefault()} onCut={(e) => e.preventDefault()} onChange={(e) => setPaymentForm({ ...paymentForm, date: e.target.value })} /><div className="form-field-warning-slot" /></label></div><div className="form-row form-row--triple"><label><span>ICTSSD (Department)</span><select value={paymentForm.ictssd} onChange={(e) => setPaymentForm({ ...paymentForm, ictssd: e.target.value })}>{ICTSSD.map((o) => <option key={o}>{o}</option>)}</select><div className="form-field-warning-slot" /></label><label><span>GAD (Department)</span><select value={paymentForm.gad} onChange={(e) => setPaymentForm({ ...paymentForm, gad: e.target.value })}>{GAD.map((o) => <option key={o}>{o}</option>)}</select><div className="form-field-warning-slot" /></label><label><span>CASH (Department)</span><select value={paymentForm.cash} onChange={(e) => setPaymentForm({ ...paymentForm, cash: e.target.value })}>{CASH.map((o) => <option key={o}>{o}</option>)}</select><div className="form-field-warning-slot" /></label></div><div className="form-actions"><button type="submit" className="primary-button">Add DV record</button><button type="button" className="ghost-button" onClick={() => { setPaymentForm(blankPayment); setPaymentSaveError(""); setDvTitleWarning(false); setDvClaimantWarning(false); setDvVoucherWarning({ nonNumeric: false, maxLength: false }); setDvAmountWarning({ invalidChars: false, maxDigits: false }); }}>Clear form</button></div>{paymentSaveError && !paymentEditModal ? <p className="form-save-error" role="alert">{paymentSaveError}</p> : null}</form></section><section className="panel table-panel">{toolbar("DV payment records", "Track voucher workflow progress with clear department status indicators.", paymentSearch, setPaymentSearch, paymentFilter, setPaymentFilter, PAYMENT_FILTERS, "Status", paymentExport)}<div className="table-wrap table-wrap--payments"><table><thead><tr><th>Title of the Project</th><th>Name and Address of Claimant</th><th>Voucher No.</th><th>Date</th><th>Amount</th><th>ICTSSD</th><th>GAD</th><th>CASH</th><th>Actions</th></tr></thead><tbody>{paymentsLoading ? <tr><td colSpan={9}>Loading DV payments…</td></tr> : pageSlice(paymentRows, safePaymentPage).map((x) => <tr key={x.id}><td>{x.title}</td><td>{x.claimantAddress}</td><td>{x.voucherNo}</td><td>{fmtDate(x.date)}</td><td>{peso.format(x.amount)}</td><td><StatusBadge label={x.ictssd} /></td><td><StatusBadge label={x.gad} /></td><td><StatusBadge label={x.cash} /></td><td><ActionSet onView={() => open("DV Payment", x.voucherNo, [["Title of the Project", x.title], ["Name and Address of Claimant", x.claimantAddress], ["Voucher No.", x.voucherNo], ["Date", fmtDate(x.date)], ["Amount", peso.format(x.amount)], ["ICTSSD", x.ictssd], ["GAD", x.gad], ["CASH", x.cash]])} onEdit={() => { setPaymentEdit(x.id); setPaymentEditForm({ title: x.title, claimantAddress: x.claimantAddress, voucherNo: x.voucherNo, amount: projectMoneyFromNumber(x.amount), date: x.date || "", ictssd: x.ictssd, gad: x.gad, cash: x.cash }); setPaymentSaveError(""); setDvTitleWarning(false); setDvClaimantWarning(false); setDvVoucherWarning({ nonNumeric: false, maxLength: false }); setDvAmountWarning({ invalidChars: false, maxDigits: false }); setPaymentEditModal(true); }} onDelete={async () => { await new Promise((resolve) => setConfirmModal({ title: x.voucherNo, onConfirm: resolve })); setConfirmModal(null); try { const res = await fetch(`/api/dv-payments/${x.id}`, { method: "DELETE" }); if (!res.ok && res.status !== 204) { const t = await res.text(); setPaymentSaveError(t || "Delete failed"); return; } setPayments((cur) => cur.filter((item) => item.id !== x.id)); } catch (err) { setPaymentSaveError(err instanceof Error ? err.message : String(err)); } }} /></td></tr>)}</tbody></table></div>{pager(safePaymentPage, paymentPages, paymentRows.length, setPaymentPage)}</section></div></section>}
 
-        {view === "outgoing" && <section className="page tool-page"><div className="tool-layout"><section className="panel metric-panel"><div className="metric-section"><div className="inline-stat-grid"><MetricChip label="Total outgoing" value={number.format(outgoing.length)} /><MetricChip label="Top route" value={outgoingBars[0]?.label || "None"} /><MetricChip label="Departments hit" value={number.format(outgoingBars.length)} /></div></div></section><section className="panel form-panel"><div className="panel__header"><div><p className="panel__kicker">ISSD Outgoing Monitoring Tool</p><h3>{outgoingEdit ? "Edit outgoing route" : "Add outgoing record"}</h3></div></div><form className="record-form" onSubmit={saveOutgoing}><label><span>Subject</span><textarea value={outgoingForm.subject} onChange={(e) => setOutgoingForm({ ...outgoingForm, subject: e.target.value })} placeholder="Enter the memo subject" /></label><div className="form-row"><label><span>Memo Number</span><input value={outgoingForm.memoNo} onChange={(e) => setOutgoingForm({ ...outgoingForm, memoNo: e.target.value })} placeholder="ISSD-YYYY-000" /></label><label><span>Date</span><input type="date" title="Choose a date using the calendar" value={outgoingForm.date} onKeyDown={blockDateFieldDirectEntry} onPaste={(e) => e.preventDefault()} onCut={(e) => e.preventDefault()} onChange={(e) => setOutgoingForm({ ...outgoingForm, date: e.target.value })} /></label></div><div className="form-row"><label><span>Thru</span><select value={outgoingForm.thru} onChange={(e) => setOutgoingForm({ ...outgoingForm, thru: e.target.value })}>{THRU.map((o) => <option key={o}>{o}</option>)}</select></label><label><span>For</span><select value={outgoingForm.forDept} onChange={(e) => setOutgoingForm({ ...outgoingForm, forDept: e.target.value })}>{FOR.map((o) => <option key={o}>{o}</option>)}</select></label></div><div className="form-actions"><button type="submit" className="primary-button">{outgoingEdit ? "Save outgoing record" : "Add outgoing"}</button><button type="button" className="ghost-button" onClick={() => { setOutgoingEdit(null); setOutgoingForm(blankOutgoing); }}>Clear form</button></div></form></section><section className="panel table-panel">{toolbar("Outgoing records", "Monitor subject routing and department distribution.", outgoingSearch, setOutgoingSearch, outgoingFilter, setOutgoingFilter, ["All", ...FOR], "For", outgoingExport)}<div className="table-wrap"><table><thead><tr><th>Subject</th><th>Memo Number</th><th>Date</th><th>Thru</th><th>For</th><th>Actions</th></tr></thead><tbody>{pageSlice(outgoingRows, safeOutgoingPage).map((x) => <tr key={x.id}><td>{x.subject}</td><td>{x.memoNo}</td><td>{fmtDate(x.date)}</td><td>{x.thru}</td><td>{x.forDept}</td><td><ActionSet onView={() => open("Outgoing", x.memoNo, [["Subject", x.subject], ["Date", fmtDate(x.date)], ["Thru", x.thru], ["For", x.forDept]])} onEdit={() => { setOutgoingEdit(x.id); setOutgoingForm({ subject: x.subject, memoNo: x.memoNo, date: x.date, thru: x.thru, forDept: x.forDept }); }} onDelete={() => setOutgoing((cur) => cur.filter((item) => item.id !== x.id))} /></td></tr>)}</tbody></table></div>{pager(safeOutgoingPage, outgoingPages, outgoingRows.length, setOutgoingPage)}</section></div></section>}
+        {view === "outgoing" && <section className="page tool-page"><div className="tool-layout">{(outgoingLoadError || outgoingSaveError) && <div role="alert" style={{background:"#fee2e2",color:"#991b1b",padding:"14px 18px",borderRadius:"14px",fontSize:".93rem"}}>{outgoingLoadError || outgoingSaveError}</div>}<section className="panel metric-panel"><div className="metric-section"><div className="inline-stat-grid"><MetricChip label="Total outgoing" value={number.format(outgoing.length)} /><MetricChip label="Top route" value={outgoingBars[0]?.label || "None"} /><MetricChip label="Departments hit" value={number.format(outgoingBars.length)} /></div></div></section><section className="panel form-panel"><div className="panel__header"><div><p className="panel__kicker">ISSD Outgoing Monitoring Tool</p><h3>{outgoingEdit ? "Edit outgoing route" : "Add outgoing record"}</h3></div></div><form className="record-form" onSubmit={saveOutgoing}><label><span>Subject</span><textarea value={outgoingForm.subject} onChange={(e) => { const raw = e.target.value; const capped = raw.slice(0, MAX_OUTGOING_SUBJECT_LENGTH); setOutgoingForm({ ...outgoingForm, subject: capped }); setOutgoingSubjectWarning(raw.length > MAX_OUTGOING_SUBJECT_LENGTH); }} onBlur={() => setOutgoingSubjectWarning(false)} placeholder="Enter the memo subject" aria-invalid={outgoingSubjectWarning} /><div className="form-field-warning-slot">{outgoingSubjectWarning ? <p className="form-field-warning" role="alert">{`At most ${MAX_OUTGOING_SUBJECT_LENGTH} characters are allowed.`}</p> : null}</div></label><div className="form-row"><label><span>Memo Number</span><input type="text" autoComplete="off" value={outgoingForm.memoNo} onChange={(e) => { const raw = e.target.value; const allowedOnly = raw.replace(OUTGOING_MEMO_NO_ALLOWED, ""); const capped = allowedOnly.slice(0, MAX_OUTGOING_MEMO_NO_LENGTH); setOutgoingForm({ ...outgoingForm, memoNo: capped }); setOutgoingMemoNoWarning({ invalidChars: OUTGOING_MEMO_NO_DISALLOWED.test(raw), maxLength: allowedOnly.length > MAX_OUTGOING_MEMO_NO_LENGTH }); }} onBlur={() => setOutgoingMemoNoWarning({ invalidChars: false, maxLength: false })} placeholder="ISSD-YYYY-000" aria-invalid={outgoingMemoNoWarning.invalidChars || outgoingMemoNoWarning.maxLength} /><div className="form-field-warning-slot">{(outgoingMemoNoWarning.invalidChars || outgoingMemoNoWarning.maxLength) ? <p className="form-field-warning" role="alert">{outgoingMemoNoWarning.invalidChars ? "Only letters, numbers, and hyphens are allowed. " : null}{outgoingMemoNoWarning.maxLength ? `At most ${MAX_OUTGOING_MEMO_NO_LENGTH} characters are allowed.` : null}</p> : null}</div></label><label><span>Date</span><input type="date" title="Choose a date using the calendar" value={outgoingForm.date} onKeyDown={blockDateFieldDirectEntry} onPaste={(e) => e.preventDefault()} onCut={(e) => e.preventDefault()} onChange={(e) => setOutgoingForm({ ...outgoingForm, date: e.target.value })} /></label></div>{outgoingDeptPickers}<div className="form-actions"><button type="submit" className="primary-button" disabled={outgoingSaving}>{outgoingSaving ? (outgoingEdit ? "Saving…" : "Adding…") : (outgoingEdit ? "Save outgoing record" : "Add outgoing")}</button><button type="button" className="ghost-button" onClick={() => { setOutgoingEdit(null); setOutgoingForm(blankOutgoing); setOutgoingSaveError(""); setOutgoingSubjectWarning(false); setOutgoingMemoNoWarning({ invalidChars: false, maxLength: false }); setThruAddVisible(false); setThruAddDraft(""); setThruAddError(""); setForAddVisible(false); setForAddDraft(""); setForAddError(""); }}>Clear form</button></div></form></section><section className="panel table-panel">{toolbar("Outgoing records", "Monitor subject routing and department distribution.", outgoingSearch, setOutgoingSearch, outgoingFilter, setOutgoingFilter, forDeptFilterOptions, "For", outgoingExport)}<div className="table-wrap table-wrap--outgoing"><table><thead><tr><th>Subject</th><th>Memo Number</th><th>Date</th><th>Thru</th><th>For</th><th>Actions</th></tr></thead><tbody>{outgoingLoading ? <tr><td colSpan={6}>Loading outgoing records…</td></tr> : pageSlice(outgoingRows, safeOutgoingPage).map((x) => <tr key={x.id}><td>{x.subject}</td><td>{x.memoNo}</td><td>{fmtDate(x.date)}</td><td>{x.thru}</td><td>{x.forDept}</td><td><ActionSet onView={() => open("Outgoing", x.memoNo, [["Subject", x.subject], ["Date", fmtDate(x.date)], ["Thru", x.thru], ["For", x.forDept]])} onEdit={() => { setOutgoingEdit(x.id); setOutgoingForm({ subject: x.subject, memoNo: x.memoNo, date: x.date, thru: x.thru, forDept: x.forDept }); setOutgoingSaveError(""); setOutgoingSubjectWarning(false); setOutgoingMemoNoWarning({ invalidChars: false, maxLength: false }); }} onDelete={() => void deleteOutgoingRow(x.id, x.memoNo)} /></td></tr>)}</tbody></table></div>{pager(safeOutgoingPage, outgoingPages, outgoingRows.length, setOutgoingPage)}</section></div></section>}
 
         {view === "reports" && (
           <section className="page reports-page">
@@ -1295,6 +1653,130 @@ function App() {
           </div>
         </div>
       )}
+      {paymentEditModal && (
+        <div className="modal-backdrop" onClick={closePaymentEditModal}>
+          <div className="modal-card workspace-modal workspace-modal--edit" onClick={(e) => e.stopPropagation()}>
+            <div className="workspace-modal__header">
+              <div>
+                <p className="workspace-modal__eyebrow">DV Payment Monitoring Tool</p>
+                <h3>Edit DV record</h3>
+              </div>
+              <button type="button" className="workspace-modal__close" aria-label="Cancel edit" onClick={closePaymentEditModal}><CloseIcon /></button>
+            </div>
+            <form className="record-form" onSubmit={savePaymentEdit}>
+              <label>
+                <span>Title of the Project *</span>
+                <input
+                  type="text"
+                  autoComplete="off"
+                  value={paymentEditForm.title}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    const capped = raw.slice(0, MAX_DV_TITLE_LENGTH);
+                    setPaymentEditForm({ ...paymentEditForm, title: capped });
+                    setDvTitleWarning(raw.length > MAX_DV_TITLE_LENGTH);
+                  }}
+                  onBlur={() => setDvTitleWarning(false)}
+                  placeholder="Enter project title"
+                  aria-invalid={dvTitleWarning}
+                />
+                <div className="form-field-warning-slot">{dvTitleWarning ? <p className="form-field-warning" role="alert">{`At most ${MAX_DV_TITLE_LENGTH} characters are allowed.`}</p> : null}</div>
+              </label>
+              <label>
+                <span>Name and Address of Claimant</span>
+                <textarea
+                  value={paymentEditForm.claimantAddress}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    const capped = raw.slice(0, MAX_DV_CLAIMANT_LENGTH);
+                    setPaymentEditForm({ ...paymentEditForm, claimantAddress: capped });
+                    setDvClaimantWarning(raw.length > MAX_DV_CLAIMANT_LENGTH);
+                  }}
+                  onBlur={() => setDvClaimantWarning(false)}
+                  placeholder="Enter claimant name and address"
+                  aria-invalid={dvClaimantWarning}
+                />
+                <div className="form-field-warning-slot">{dvClaimantWarning ? <p className="form-field-warning" role="alert">{`At most ${MAX_DV_CLAIMANT_LENGTH} characters are allowed.`}</p> : null}</div>
+              </label>
+              <div className="form-row">
+                <label>
+                  <span>Voucher No.</span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    value={paymentEditForm.voucherNo}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      const digitsOnly = raw.replace(/\D/g, "");
+                      const capped = digitsOnly.slice(0, MAX_DV_VOUCHER_LENGTH);
+                      setPaymentEditForm({ ...paymentEditForm, voucherNo: capped });
+                      setDvVoucherWarning({ nonNumeric: /\D/.test(raw), maxLength: digitsOnly.length > MAX_DV_VOUCHER_LENGTH });
+                    }}
+                    onBlur={() => setDvVoucherWarning({ nonNumeric: false, maxLength: false })}
+                    placeholder="Enter voucher number"
+                    aria-invalid={dvVoucherWarning.nonNumeric || dvVoucherWarning.maxLength}
+                  />
+                  <div className="form-field-warning-slot">{(dvVoucherWarning.nonNumeric || dvVoucherWarning.maxLength) ? <p className="form-field-warning" role="alert">{dvVoucherWarning.nonNumeric ? "Numbers only. " : null}{dvVoucherWarning.maxLength ? `At most ${MAX_DV_VOUCHER_LENGTH} digits are allowed.` : null}</p> : null}</div>
+                </label>
+                <label>
+                  <span>Amount</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    autoComplete="off"
+                    value={paymentEditForm.amount}
+                    onChange={(e) => {
+                      const st = projectMoneyParseState(e.target.value);
+                      setPaymentEditForm({ ...paymentEditForm, amount: st.display });
+                      setDvAmountWarning({ invalidChars: st.hadInvalidChars, maxDigits: st.digitLimitExceeded });
+                    }}
+                    onBlur={() => setDvAmountWarning({ invalidChars: false, maxDigits: false })}
+                    placeholder="0.00"
+                    aria-invalid={dvAmountWarning.invalidChars || dvAmountWarning.maxDigits}
+                  />
+                  <div className="form-field-warning-slot">{(dvAmountWarning.invalidChars || dvAmountWarning.maxDigits) ? <p className="form-field-warning" role="alert">{dvAmountWarning.invalidChars ? "Only numbers, commas, and periods are allowed. " : null}{dvAmountWarning.maxDigits ? `At most ${MAX_PROJECT_MONEY_INT_DIGITS} integer digits and ${MAX_PROJECT_MONEY_FRAC_DIGITS} decimal places are allowed.` : null}</p> : null}</div>
+                </label>
+                <label>
+                  <span>Record date</span>
+                  <input
+                    type="date"
+                    title="Choose a date using the calendar"
+                    value={paymentEditForm.date}
+                    onKeyDown={blockDateFieldDirectEntry}
+                    onPaste={(e) => e.preventDefault()}
+                    onCut={(e) => e.preventDefault()}
+                    onChange={(e) => setPaymentEditForm({ ...paymentEditForm, date: e.target.value })}
+                  />
+                  <div className="form-field-warning-slot" />
+                </label>
+              </div>
+              <div className="form-row form-row--triple">
+                <label>
+                  <span>ICTSSD (Department)</span>
+                  <select value={paymentEditForm.ictssd} onChange={(e) => setPaymentEditForm({ ...paymentEditForm, ictssd: e.target.value })}>{ICTSSD.map((o) => <option key={o}>{o}</option>)}</select>
+                  <div className="form-field-warning-slot" />
+                </label>
+                <label>
+                  <span>GAD (Department)</span>
+                  <select value={paymentEditForm.gad} onChange={(e) => setPaymentEditForm({ ...paymentEditForm, gad: e.target.value })}>{GAD.map((o) => <option key={o}>{o}</option>)}</select>
+                  <div className="form-field-warning-slot" />
+                </label>
+                <label>
+                  <span>CASH (Department)</span>
+                  <select value={paymentEditForm.cash} onChange={(e) => setPaymentEditForm({ ...paymentEditForm, cash: e.target.value })}>{CASH.map((o) => <option key={o}>{o}</option>)}</select>
+                  <div className="form-field-warning-slot" />
+                </label>
+              </div>
+              <div className="form-actions">
+                <button type="submit" className="primary-button" disabled={paymentSaving}>{paymentSaving ? "Saving…" : "Save changes"}</button>
+                <button type="button" className="ghost-button" onClick={closePaymentEditModal}>Cancel</button>
+              </div>
+              {paymentSaveError ? <p className="form-save-error" role="alert">{paymentSaveError}</p> : null}
+            </form>
+          </div>
+        </div>
+      )}
       {confirmModal && (
         <div className="modal-backdrop" onClick={() => setConfirmModal(null)}>
           <div className="modal-card workspace-modal workspace-modal--confirm" onClick={(e) => e.stopPropagation()}>
@@ -1320,7 +1802,15 @@ function App() {
   );
 }
 
-function MetricChip({ label, value }) { return <article className="metric-chip"><span>{label}</span><strong>{value}</strong></article>; }
+function MetricChip({ label, value }) {
+  const valueText = value == null ? "" : String(value);
+  return (
+    <article className="metric-chip">
+      <span>{label}</span>
+      <strong title={valueText}>{value}</strong>
+    </article>
+  );
+}
 function StatusBadge({ label }) { return <span className={`status-badge ${statusTone(label)}`}>{label}</span>; }
 function ActionSet({ onView, onEdit, onDelete }) {
   return (
@@ -1746,5 +2236,3 @@ function ThemeIcon({ theme }) {
 }
 
 export default App;
-
-

@@ -100,13 +100,44 @@ const DV_CREATE_SQL = `CREATE TABLE ${DV_TABLE} (
       )`;
 
 // ---------------------------------------------------------------------------
+// MONITORING_OUTGOING
+// ---------------------------------------------------------------------------
+
+const OUTGOING_TABLE = "MONITORING_OUTGOING";
+const OUTGOING_CREATE_SQL = `CREATE TABLE ${OUTGOING_TABLE} (
+        ID          NUMBER(18)     PRIMARY KEY,
+        SUBJECT     VARCHAR2(2000) NOT NULL,
+        MEMO_NO     VARCHAR2(200)  NOT NULL,
+        MEMO_DATE   DATE           NOT NULL,
+        THRU        VARCHAR2(100)  NOT NULL,
+        FOR_DEPT    VARCHAR2(100)  NOT NULL,
+        CREATED_AT  TIMESTAMP      DEFAULT SYSTIMESTAMP NOT NULL,
+        UPDATED_AT  TIMESTAMP      DEFAULT SYSTIMESTAMP NOT NULL
+      )`;
+
+// ---------------------------------------------------------------------------
+// MONITORING_DEPARTMENTS
+// ---------------------------------------------------------------------------
+
+const DEPARTMENTS_TABLE = "MONITORING_DEPARTMENTS";
+const DEPARTMENTS_CREATE_SQL = `CREATE TABLE ${DEPARTMENTS_TABLE} (
+        ID          NUMBER(18)    PRIMARY KEY,
+        NAME        VARCHAR2(100) NOT NULL,
+        KIND        VARCHAR2(10)  NOT NULL,
+        IS_BUILTIN  NUMBER(1)     DEFAULT 0 NOT NULL,
+        CREATED_AT  TIMESTAMP     DEFAULT SYSTIMESTAMP NOT NULL,
+        UPDATED_AT  TIMESTAMP     DEFAULT SYSTIMESTAMP NOT NULL
+      )`;
+
+// ---------------------------------------------------------------------------
 // Public entry-point
 // ---------------------------------------------------------------------------
 
 /**
- * Creates MONITORING_PROJECTS and MONITORING_DV_PAYMENTS in the connected
- * user's schema if they do not exist, and adds audit columns when missing.
- * Matches the DDL in backend/sql/*.sql.
+ * Creates MONITORING_PROJECTS, MONITORING_DV_PAYMENTS, MONITORING_OUTGOING,
+ * and MONITORING_DEPARTMENTS
+ * in the connected user's schema if they do not exist, and adds audit columns
+ * when missing. Matches the DDL in backend/sql/*.sql.
  * Disable with MONITORING_AUTO_DDL=0 when a DBA manages DDL separately.
  */
 async function ensureMonitoringProjectsTable() {
@@ -122,6 +153,12 @@ async function ensureMonitoringProjectsTable() {
 
     await createTableIfAbsent(connection, DV_TABLE, DV_CREATE_SQL);
     await ensureAuditColumns(connection, DV_TABLE);
+
+    await createTableIfAbsent(connection, OUTGOING_TABLE, OUTGOING_CREATE_SQL);
+    await ensureAuditColumns(connection, OUTGOING_TABLE);
+
+    await createTableIfAbsent(connection, DEPARTMENTS_TABLE, DEPARTMENTS_CREATE_SQL);
+    await ensureAuditColumns(connection, DEPARTMENTS_TABLE);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     const hint =
