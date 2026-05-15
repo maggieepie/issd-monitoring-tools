@@ -3,25 +3,15 @@ import oracledb from "oracledb";
 import { env } from "../config/env.js";
 import { getPool } from "./oraclePool.js";
 
-const TABLE = "MONITORING_PROJECTS";
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
-const CREATE_SQL = `CREATE TABLE ${TABLE} (
-        ID NUMBER(18) PRIMARY KEY,
-        CONTRACT_NAME VARCHAR2(500) NOT NULL,
-        CONTRACT_DATE DATE NOT NULL,
-        DURATION VARCHAR2(200) NOT NULL,
-        GOODS VARCHAR2(200) NOT NULL,
-        AMOUNT NUMBER(18, 2) NOT NULL,
-        OUTSTANDING NUMBER(18, 2) NOT NULL,
-        CREATED_AT TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
-        UPDATED_AT TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL
-      )`;
-
-/** @param {import("oracledb").Connection} connection */
-async function listUserColumns(connection) {
+/** Returns the set of existing column names (upper-cased) for a given table. */
+async function listColumns(connection, tableName) {
   const result = await connection.execute(
     `SELECT column_name FROM user_tab_columns WHERE table_name = :t`,
-    { t: TABLE },
+    { t: tableName },
     { outFormat: oracledb.OUT_FORMAT_OBJECT },
   );
   return new Set(
@@ -31,31 +21,92 @@ async function listUserColumns(connection) {
   );
 }
 
-/** @param {import("oracledb").Connection} connection */
-async function ensureAuditColumns(connection) {
-  let cols = await listUserColumns(connection);
-  if (!cols.has("CREATED_AT")) {
-    await connection.execute(
-      `ALTER TABLE ${TABLE} ADD (CREATED_AT TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL)`,
-      [],
-      { autoCommit: true },
-    );
-    cols = await listUserColumns(connection);
-    console.log(`Oracle: added CREATED_AT to ${TABLE}`);
-  }
-  if (!cols.has("UPDATED_AT")) {
-    await connection.execute(
-      `ALTER TABLE ${TABLE} ADD (UPDATED_AT TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL)`,
-      [],
-      { autoCommit: true },
-    );
-    console.log(`Oracle: added UPDATED_AT to ${TABLE}`);
+/** Creates a table if it does not already exist (ignores ORA-00955). */
+async function createTableIfAbsent(connection, tableName, createSql) {
+  const check = await connection.execute(
+    `SELECT COUNT(*) AS CNT FROM user_tables WHERE table_name = :tname`,
+    { tname: tableName },
+    { outFormat: oracledb.OUT_FORMAT_OBJECT },
+  );
+  const row = check.rows?.[0];
+  const cnt = Number(row?.CNT ?? row?.cnt ?? 0);
+  if (cnt === 0) {
+    try {
+      await connection.execute(createSql, [], { autoCommit: true });
+      console.log(`Oracle: created table ${tableName}`);
+    } catch (createErr) {
+      const msg = createErr instanceof Error ? createErr.message : String(createErr);
+      if (!msg.includes("ORA-00955")) throw createErr;
+    }
   }
 }
 
+/** Adds CREATED_AT and UPDATED_AT to a table if they are missing. */
+async function ensureAuditColumns(connection, tableName) {
+  let cols = await listColumns(connection, tableName);
+  if (!cols.has("CREATED_AT")) {
+    await connection.execute(
+      `ALTER TABLE ${tableName} ADD (CREATED_AT TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL)`,
+      [],
+      { autoCommit: true },
+    );
+    cols = await listColumns(connection, tableName);
+    console.log(`Oracle: added CREATED_AT to ${tableName}`);
+  }
+  if (!cols.has("UPDATED_AT")) {
+    await connection.execute(
+      `ALTER TABLE ${tableName} ADD (UPDATED_AT TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL)`,
+      [],
+      { autoCommit: true },
+    );
+    console.log(`Oracle: added UPDATED_AT to ${tableName}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// MONITORING_PROJECTS
+// ---------------------------------------------------------------------------
+
+const PROJECTS_TABLE = "MONITORING_PROJECTS";
+const PROJECTS_CREATE_SQL = `CREATE TABLE ${PROJECTS_TABLE} (
+        ID            NUMBER(18)    PRIMARY KEY,
+        CONTRACT_NAME VARCHAR2(500) NOT NULL,
+        CONTRACT_DATE DATE          NOT NULL,
+        DURATION      VARCHAR2(200) NOT NULL,
+        GOODS         VARCHAR2(200) NOT NULL,
+        AMOUNT        NUMBER(18, 2) NOT NULL,
+        OUTSTANDING   NUMBER(18, 2) NOT NULL,
+        CREATED_AT    TIMESTAMP     DEFAULT SYSTIMESTAMP NOT NULL,
+        UPDATED_AT    TIMESTAMP     DEFAULT SYSTIMESTAMP NOT NULL
+      )`;
+
+// ---------------------------------------------------------------------------
+// MONITORING_DV_PAYMENTS
+// ---------------------------------------------------------------------------
+
+const DV_TABLE = "MONITORING_DV_PAYMENTS";
+const DV_CREATE_SQL = `CREATE TABLE ${DV_TABLE} (
+        ID               NUMBER(18)    PRIMARY KEY,
+        TITLE            VARCHAR2(500) NOT NULL,
+        CLAIMANT_ADDRESS VARCHAR2(500) NOT NULL,
+        VOUCHER_NO       VARCHAR2(200) NOT NULL,
+        VOUCHER_DATE     DATE          NOT NULL,
+        AMOUNT           NUMBER(18, 2) DEFAULT 0 NOT NULL,
+        ICTSSD           VARCHAR2(100) DEFAULT 'Pending'  NOT NULL,
+        GAD              VARCHAR2(100) DEFAULT 'Pending'  NOT NULL,
+        CASH             VARCHAR2(100) DEFAULT 'Received' NOT NULL,
+        CREATED_AT       TIMESTAMP     DEFAULT SYSTIMESTAMP NOT NULL,
+        UPDATED_AT       TIMESTAMP     DEFAULT SYSTIMESTAMP NOT NULL
+      )`;
+
+// ---------------------------------------------------------------------------
+// Public entry-point
+// ---------------------------------------------------------------------------
+
 /**
- * Creates MONITORING_PROJECTS in the connected user's schema if it does not exist, and adds
- * CREATED_AT / UPDATED_AT when missing (matches backend/sql/monitoring-projects.sql).
+ * Creates MONITORING_PROJECTS and MONITORING_DV_PAYMENTS in the connected
+ * user's schema if they do not exist, and adds audit columns when missing.
+ * Matches the DDL in backend/sql/*.sql.
  * Disable with MONITORING_AUTO_DDL=0 when a DBA manages DDL separately.
  */
 async function ensureMonitoringProjectsTable() {
@@ -66,32 +117,16 @@ async function ensureMonitoringProjectsTable() {
   const pool = getPool();
   const connection = await pool.getConnection();
   try {
-    const check = await connection.execute(
-      `SELECT COUNT(*) AS CNT FROM user_tables WHERE table_name = :tname`,
-      { tname: TABLE },
-      { outFormat: oracledb.OUT_FORMAT_OBJECT },
-    );
-    const row = check.rows?.[0];
-    const cnt = Number(row?.CNT ?? row?.cnt ?? 0);
-    if (cnt === 0) {
-      try {
-        await connection.execute(CREATE_SQL, [], { autoCommit: true });
-        console.log(`Oracle: created table ${TABLE}`);
-      } catch (createErr) {
-        const createMsg =
-          createErr instanceof Error ? createErr.message : String(createErr);
-        if (!createMsg.includes("ORA-00955")) {
-          throw createErr;
-        }
-      }
-    }
+    await createTableIfAbsent(connection, PROJECTS_TABLE, PROJECTS_CREATE_SQL);
+    await ensureAuditColumns(connection, PROJECTS_TABLE);
 
-    await ensureAuditColumns(connection);
+    await createTableIfAbsent(connection, DV_TABLE, DV_CREATE_SQL);
+    await ensureAuditColumns(connection, DV_TABLE);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     const hint =
-      "If this user cannot CREATE TABLE, run backend/sql/monitoring-projects.sql as a DBA, or set MONITORING_AUTO_DDL=0 and create the table manually.";
-    console.error(`Oracle: failed to auto-create ${TABLE}`, err);
+      "If this user cannot CREATE TABLE, run the scripts in backend/sql/ as a DBA, or set MONITORING_AUTO_DDL=0 and create the tables manually.";
+    console.error("Oracle: failed to auto-create monitoring tables", err);
     throw new Error(`${msg} ${hint}`);
   } finally {
     await connection.close();
