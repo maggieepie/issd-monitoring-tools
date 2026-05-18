@@ -119,6 +119,22 @@ const OUTGOING_CREATE_SQL = `CREATE TABLE ${OUTGOING_TABLE} (
 // MONITORING_DEPARTMENTS
 // ---------------------------------------------------------------------------
 
+const POLICIES_TABLE = "MONITORING_POLICIES";
+const POLICIES_CREATE_SQL = `CREATE TABLE ${POLICIES_TABLE} (
+        ID                NUMBER(18)    PRIMARY KEY,
+        TRANSACTION_CODE  VARCHAR2(50)  NOT NULL,
+        POLICY_TITLE      VARCHAR2(500) NOT NULL,
+        CREATED_BY        VARCHAR2(200) NOT NULL,
+        ASSIGNED_TO       VARCHAR2(200) NOT NULL,
+        START_DATE        DATE          NOT NULL,
+        END_DATE          DATE          NOT NULL,
+        DAYS_COUNT        NUMBER(10),
+        STATUS_LABEL      VARCHAR2(50)  NOT NULL,
+        REMARKS           VARCHAR2(2000),
+        CREATED_AT        TIMESTAMP     DEFAULT SYSTIMESTAMP NOT NULL,
+        UPDATED_AT        TIMESTAMP     DEFAULT SYSTIMESTAMP NOT NULL
+      )`;
+
 const DEPARTMENTS_TABLE = "MONITORING_DEPARTMENTS";
 const DEPARTMENTS_CREATE_SQL = `CREATE TABLE ${DEPARTMENTS_TABLE} (
         ID          NUMBER(18)    PRIMARY KEY,
@@ -156,6 +172,9 @@ async function ensureMonitoringProjectsTable() {
 
     await createTableIfAbsent(connection, OUTGOING_TABLE, OUTGOING_CREATE_SQL);
     await ensureAuditColumns(connection, OUTGOING_TABLE);
+
+    await createTableIfAbsent(connection, POLICIES_TABLE, POLICIES_CREATE_SQL);
+    await ensureAuditColumns(connection, POLICIES_TABLE);
 
     await createTableIfAbsent(connection, DEPARTMENTS_TABLE, DEPARTMENTS_CREATE_SQL);
     await ensureAuditColumns(connection, DEPARTMENTS_TABLE);

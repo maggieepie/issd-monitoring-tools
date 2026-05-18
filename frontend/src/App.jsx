@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 
+import PolicyMonitoringView from "./PolicyMonitoringView.jsx";
+import RequiredFieldsAlertModal from "./RequiredFieldsAlertModal.jsx";
+import { REQUIRED_FIELDS_ALERT_MESSAGE } from "./monitoringShared.js";
+
 const peso = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP", minimumFractionDigits: 2 });
 const number = new Intl.NumberFormat("en-PH");
 const PAGE = 5;
@@ -7,6 +11,7 @@ const NAV = [
   { id: "projects", label: "Project Monitoring", icon: "projects" },
   { id: "payments", label: "Disbursement Voucher Monitoring", icon: "dv" },
   { id: "outgoing", label: "Outgoing Document Monitoring", icon: "outgoing" },
+  { id: "policies", label: "Policy Monitoring", icon: "policy" },
   { id: "reports", label: "Reports and Analytics", icon: "reports" },
 ];
 const WORKSPACE_SESSION_KEY = "monitoring-workspace-session";
@@ -37,6 +42,10 @@ const VIEW_META = {
   outgoing: {
     title: "Outgoing Document Monitoring",
     subtext: "Follow outgoing memo routing, endorsements, and receiving departments clearly.",
+  },
+  policies: {
+    title: "Policy Monitoring",
+    subtext: "Track policy records, assignments, timelines, and status from one workspace.",
   },
   reports: {
     title: "Reports and Analytics",
@@ -142,11 +151,16 @@ function DeptSelectWithAdd({
   addError,
   onAddCommit,
   addAriaLabel,
+  requiredMark = false,
+  requiredWarning = false,
+  showPlaceholderOption = false,
 }) {
   return (
     <div className="form-label-with-action">
       <div className="form-label-with-action__row">
-        <label className="form-label-with-action__text" htmlFor={id}><span>{label}</span></label>
+        <label className="form-label-with-action__text" htmlFor={id}>
+          <span>{label}{requiredMark ? " *" : ""}</span>
+        </label>
         {addVisible ? (
           <button type="button" className="goods-cancel-btn" aria-label="Cancel" onClick={onAddCancel}>
             <span className="goods-btn__icon">
@@ -158,21 +172,27 @@ function DeptSelectWithAdd({
             <span className="goods-btn__label">Cancel</span>
           </button>
         ) : (
-          <button type="button" className="goods-add-btn" aria-label={addAriaLabel} onClick={onAddOpen}>
+          <button type="button" className="goods-add-btn goods-add-btn--dept" aria-label={addAriaLabel} onClick={onAddOpen}>
             <span className="goods-btn__icon">
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                 <line x1="8" y1="2" x2="8" y2="14" />
                 <line x1="2" y1="8" x2="14" y2="8" />
               </svg>
             </span>
-            <span className="goods-btn__label">Add</span>
+            <span className="goods-btn__label">Add Department</span>
           </button>
         )}
       </div>
-      <select id={id} value={value} onChange={onChange}>
-        {options.map((o) => <option key={o}>{o}</option>)}
-      </select>
-      {addVisible ? (
+      {!addVisible ? (
+        <select id={id} value={value} onChange={onChange} aria-invalid={requiredWarning}>
+          {showPlaceholderOption ? <option value="">Select department</option> : null}
+          {options.map((o) => (
+            <option key={o} value={o}>
+              {o}
+            </option>
+          ))}
+        </select>
+      ) : (
         <div className="form-inline-add-goods">
           <input
             type="text"
@@ -185,14 +205,21 @@ function DeptSelectWithAdd({
                 void onAddCommit();
               }
             }}
-            placeholder={`New ${label.toLowerCase()} department`}
-            aria-label={`Add ${label} department`}
+            placeholder="Add New Department"
+            aria-label="Add New Department"
           />
           <button type="button" className="ghost-button ghost-button--compact" onClick={() => void onAddCommit()}>Save</button>
           <button type="button" className="ghost-button ghost-button--compact" onClick={onAddCancel}>Cancel</button>
         </div>
-      ) : null}
-      {addError ? <p className="form-field-warning form-field-warning--tight" role="alert">{addError}</p> : null}
+      )}
+      <div className="form-field-warning-slot">
+        {requiredWarning ? (
+          <p className="form-field-warning" role="alert">
+            {OUTGOING_REQUIRED_MSG}
+          </p>
+        ) : null}
+        {addError ? <p className="form-field-warning form-field-warning--tight" role="alert">{addError}</p> : null}
+      </div>
     </div>
   );
 }
@@ -211,6 +238,28 @@ const MAX_OUTGOING_SUBJECT_LENGTH = 500;
 const MAX_OUTGOING_MEMO_NO_LENGTH = 20;
 const OUTGOING_MEMO_NO_ALLOWED = /[^A-Za-z0-9-]/g;
 const OUTGOING_MEMO_NO_DISALLOWED = /[^A-Za-z0-9-]/;
+const OUTGOING_REQUIRED_MSG = "This field is required.";
+const blankOutgoingRequiredWarnings = {
+  subject: false,
+  memoNo: false,
+  date: false,
+  thru: false,
+  forDept: false,
+};
+const blankPaymentRequiredWarnings = {
+  title: false,
+  claimantAddress: false,
+  voucherNo: false,
+  amount: false,
+  date: false,
+};
+const blankProjectRequiredWarnings = {
+  contractName: false,
+  date: false,
+  duration: false,
+  amount: false,
+  outstanding: false,
+};
 /** Hard cap for duration text (UI + API; Oracle DURATION remains VARCHAR2(200)). */
 const MAX_PROJECT_DURATION_LENGTH = 30;
 
@@ -222,7 +271,7 @@ const blankProjectMoneyWarnings = {
   duration: { maxLength: false },
 };
 const blankPayment = { title: "", claimantAddress: "", voucherNo: "", amount: "", date: "", ictssd: "Pending", gad: "Pending", cash: "Received" };
-const blankOutgoing = { subject: "", memoNo: "", date: "", thru: "BAC", forDept: "SSC" };
+const blankOutgoing = { subject: "", memoNo: "", date: "", thru: "", forDept: "" };
 const LANDING_BUILDING_IMAGE = "/sss-building.jpg";
 const LANDING_LOGO_IMAGE = "https://www.sss.gov.ph/wp-content/uploads/2024/09/SSS-favicon.png";
 const SIDEBAR_LOGO_IMAGE = "/sss-logo.png";
@@ -293,6 +342,28 @@ const pageSlice = (items, p) => items.slice((p - 1) * PAGE, p * PAGE);
 const tally = (items, key) => Object.entries(items.reduce((a, item) => ({ ...a, [item[key]]: (a[item[key]] || 0) + 1 }), {})).map(([label, value]) => ({ label, value }));
 const normalizePaymentStatus = (status) => ({ Receive: "Received", Received: "Received", Return: "Returned", Returned: "Returned" }[status] || status);
 const compactLabel = (value, limit = 22) => (value.length > limit ? `${value.slice(0, limit - 3)}...` : value);
+
+/** Log-scale ratio so small and large amounts both read well in charts (0–1). */
+function analyticsLogRatio(value, max) {
+  if (value <= 0 || max <= 0) return 0;
+  const log10 = (n) => Math.log10(Math.max(n, 1));
+  return log10(value) / log10(max);
+}
+
+function analyticsBarWidthPercent(value, max) {
+  if (value <= 0) return 0;
+  const pct = analyticsLogRatio(value, max) * 100;
+  return Math.min(100, Math.max(6, pct));
+}
+
+function formatAnalyticsMoney(value) {
+  const abs = Math.abs(value);
+  if (abs >= 1e12) return `₱${(value / 1e12).toFixed(2)}T`;
+  if (abs >= 1e9) return `₱${(value / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `₱${(value / 1e6).toFixed(2)}M`;
+  if (abs >= 1e4) return `₱${(value / 1e3).toFixed(1)}K`;
+  return peso.format(value);
+}
 const sortDateDesc = (items, key = "date") => [...items].sort((a, b) => b[key].localeCompare(a[key]));
 function exportCsv(name, rows) {
   const csv = rows.map((row) => row.map((cell) => `"${String(cell ?? "").replaceAll('"', '""')}"`).join(",")).join("\n");
@@ -482,6 +553,8 @@ function App() {
   const [paymentEditForm, setPaymentEditForm] = useState(blankPayment);
   const [paymentSaving, setPaymentSaving] = useState(false);
   const [outgoingEdit, setOutgoingEdit] = useState(null);
+  const [outgoingEditModal, setOutgoingEditModal] = useState(false);
+  const [outgoingEditForm, setOutgoingEditForm] = useState(blankOutgoing);
   const [projectSearch, setProjectSearch] = useState("");
   const [paymentSearch, setPaymentSearch] = useState("");
   const [outgoingSearch, setOutgoingSearch] = useState("");
@@ -503,6 +576,7 @@ function App() {
   const [outgoingSaving, setOutgoingSaving] = useState(false);
   const [outgoingSubjectWarning, setOutgoingSubjectWarning] = useState(false);
   const [outgoingMemoNoWarning, setOutgoingMemoNoWarning] = useState({ invalidChars: false, maxLength: false });
+  const [outgoingRequiredWarnings, setOutgoingRequiredWarnings] = useState(blankOutgoingRequiredWarnings);
   const [departments, setDepartments] = useState([]);
   const [thruAddVisible, setThruAddVisible] = useState(false);
   const [thruAddDraft, setThruAddDraft] = useState("");
@@ -514,10 +588,16 @@ function App() {
   const [dvClaimantWarning, setDvClaimantWarning] = useState(false);
   const [dvVoucherWarning, setDvVoucherWarning] = useState({ nonNumeric: false, maxLength: false });
   const [dvAmountWarning, setDvAmountWarning] = useState({ invalidChars: false, maxDigits: false });
+  const [paymentRequiredWarnings, setPaymentRequiredWarnings] = useState(blankPaymentRequiredWarnings);
+  const [projectRequiredWarnings, setProjectRequiredWarnings] = useState(blankProjectRequiredWarnings);
   const [projectSaving, setProjectSaving] = useState(false);
   const [reportExport, setReportExport] = useState("summary");
   const [modal, setModal] = useState(null);
   const [confirmModal, setConfirmModal] = useState(null);
+  const [requiredFieldsAlert, setRequiredFieldsAlert] = useState(null);
+  const showRequiredFieldsAlert = (message = REQUIRED_FIELDS_ALERT_MESSAGE) => {
+    setRequiredFieldsAlert(message);
+  };
   const [editModal, setEditModal] = useState(false);
   const [editForm, setEditForm] = useState(blankProject);
   const [editMoneyWarnings, setEditMoneyWarnings] = useState(blankProjectMoneyWarnings);
@@ -544,6 +624,20 @@ function App() {
     setDvVoucherWarning({ nonNumeric: false, maxLength: false });
     setDvAmountWarning({ invalidChars: false, maxDigits: false });
     setPaymentSaveError("");
+  };
+  const closeOutgoingEditModal = () => {
+    setOutgoingEditModal(false);
+    setOutgoingEdit(null);
+    setOutgoingEditForm(blankOutgoing);
+    setOutgoingSubjectWarning(false);
+    setOutgoingMemoNoWarning({ invalidChars: false, maxLength: false });
+    setThruAddVisible(false);
+    setThruAddDraft("");
+    setThruAddError("");
+    setForAddVisible(false);
+    setForAddDraft("");
+    setForAddError("");
+    setOutgoingSaveError("");
   };
   const currentViewMeta = VIEW_META[view];
 
@@ -846,7 +940,7 @@ function App() {
   }, [projects, payments, outgoing]);
 
   useEffect(() => {
-    if (!started || view !== "projects") return undefined;
+    if (!started) return undefined;
     let cancelled = false;
     (async () => {
       setProjectsLoading(true);
@@ -876,10 +970,10 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [started, view]);
+  }, [started]);
 
   useEffect(() => {
-    if (!started || view !== "payments") return undefined;
+    if (!started) return undefined;
     let cancelled = false;
     (async () => {
       setPaymentsLoading(true);
@@ -898,10 +992,10 @@ function App() {
       }
     })();
     return () => { cancelled = true; };
-  }, [started, view]);
+  }, [started]);
 
   useEffect(() => {
-    if (!started || view !== "outgoing") return undefined;
+    if (!started) return undefined;
     let cancelled = false;
     (async () => {
       setOutgoingLoading(true);
@@ -923,7 +1017,7 @@ function App() {
       }
     })();
     return () => { cancelled = true; };
-  }, [started, view]);
+  }, [started]);
 
   useEffect(() => {
     if (!started) return undefined;
@@ -983,10 +1077,7 @@ function App() {
       }
       setOutgoing((cur) => cur.filter((item) => item.id !== id));
       if (outgoingEdit === id) {
-        setOutgoingEdit(null);
-        setOutgoingForm(blankOutgoing);
-        setOutgoingSubjectWarning(false);
-        setOutgoingMemoNoWarning({ invalidChars: false, maxLength: false });
+        closeOutgoingEditModal();
       }
     } catch (e) {
       setOutgoingSaveError(e instanceof Error ? e.message : String(e));
@@ -995,8 +1086,43 @@ function App() {
 
   const saveProject = async (e) => {
     e.preventDefault();
-    const src = projectEdit != null ? editForm : projectForm;
-    if (!src.contractName || !src.date || !src.duration) return;
+    const isEdit = projectEdit != null;
+    const src = isEdit ? editForm : projectForm;
+    setProjectSaveError("");
+
+    if (!isEdit) {
+      if (goodsAddVisible || goodsRenameVisible) {
+        setProjectSaveError("Save or cancel goods changes before adding the project.");
+        return;
+      }
+      const required = {
+        contractName: !src.contractName.trim(),
+        date: !src.date?.trim(),
+        duration: !src.duration.trim(),
+        amount: !src.amount.trim(),
+        outstanding: !src.outstanding.trim(),
+      };
+      if (Object.values(required).some(Boolean)) {
+        setProjectRequiredWarnings(required);
+        showRequiredFieldsAlert();
+        return;
+      }
+      if (
+        projectMoneyWarnings.contractName.maxLength ||
+        projectMoneyWarnings.duration.maxLength ||
+        projectMoneyWarnings.amount.invalidChars ||
+        projectMoneyWarnings.amount.maxDigits ||
+        projectMoneyWarnings.outstanding.invalidChars ||
+        projectMoneyWarnings.outstanding.maxDigits
+      ) {
+        setProjectSaveError("Fix field errors before saving.");
+        return;
+      }
+      setProjectRequiredWarnings(blankProjectRequiredWarnings);
+    } else if (!src.contractName || !src.date || !src.duration) {
+      return;
+    }
+
     if (projectMoneyExceedsOracleMax(src.amount) || projectMoneyExceedsOracleMax(src.outstanding)) {
       setProjectSaveError("Amount values exceed the maximum allowed (16 digits before decimal).");
       return;
@@ -1004,7 +1130,6 @@ function App() {
     const amount = projectMoneyDisplayToNumber(src.amount);
     const outstanding = projectMoneyDisplayToNumber(src.outstanding);
     setProjectSaving(true);
-    setProjectSaveError("");
     const body = {
       contractName: src.contractName.trim().slice(0, MAX_PROJECT_CONTRACT_NAME_LENGTH),
       date: src.date,
@@ -1035,6 +1160,7 @@ function App() {
       setProjects((cur) => (projectEdit != null ? cur.map((x) => (x.id === projectEdit ? saved : x)) : [saved, ...cur]));
       setProjectForm(blankProject);
       setProjectMoneyWarnings(blankProjectMoneyWarnings);
+      setProjectRequiredWarnings(blankProjectRequiredWarnings);
       setGoodsAddVisible(false);
       setGoodsAddDraft("");
       setGoodsAddError("");
@@ -1052,19 +1178,38 @@ function App() {
   };
   const savePayment = async (e) => {
     e.preventDefault();
-    if (!paymentForm.title || !paymentForm.claimantAddress || !paymentForm.voucherNo) return;
-    const todayStr = new Date().toISOString().slice(0, 10);
+    setPaymentSaveError("");
+    const required = {
+      title: !paymentForm.title.trim(),
+      claimantAddress: !paymentForm.claimantAddress.trim(),
+      voucherNo: !paymentForm.voucherNo.trim(),
+      amount: !paymentForm.amount.trim(),
+      date: !paymentForm.date?.trim(),
+    };
+    if (Object.values(required).some(Boolean)) {
+      setPaymentRequiredWarnings(required);
+      showRequiredFieldsAlert();
+      return;
+    }
+    if (dvVoucherWarning.nonNumeric || dvVoucherWarning.maxLength) {
+      setPaymentSaveError("Fix voucher number errors before saving.");
+      return;
+    }
+    if (dvAmountWarning.invalidChars || dvAmountWarning.maxDigits) {
+      setPaymentSaveError("Fix amount errors before saving.");
+      return;
+    }
+    setPaymentRequiredWarnings(blankPaymentRequiredWarnings);
     const body = {
-      title: paymentForm.title.trim(),
-      claimantAddress: paymentForm.claimantAddress.trim(),
-      voucherNo: paymentForm.voucherNo.trim(),
+      title: paymentForm.title.trim().slice(0, MAX_DV_TITLE_LENGTH),
+      claimantAddress: paymentForm.claimantAddress.trim().slice(0, MAX_DV_CLAIMANT_LENGTH),
+      voucherNo: paymentForm.voucherNo.trim().slice(0, MAX_DV_VOUCHER_LENGTH),
       amount: projectMoneyDisplayToNumber(paymentForm.amount),
-      date: paymentForm.date?.trim() || todayStr,
+      date: paymentForm.date.trim(),
       ictssd: paymentForm.ictssd,
       gad: paymentForm.gad,
       cash: paymentForm.cash,
     };
-    setPaymentSaveError("");
     try {
       const res = await fetch("/api/dv-payments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const raw = await res.text();
@@ -1074,6 +1219,11 @@ function App() {
       const saved = data;
       setPayments((cur) => [saved, ...cur]);
       setPaymentForm(blankPayment);
+      setDvTitleWarning(false);
+      setDvClaimantWarning(false);
+      setDvVoucherWarning({ nonNumeric: false, maxLength: false });
+      setDvAmountWarning({ invalidChars: false, maxDigits: false });
+      setPaymentRequiredWarnings(blankPaymentRequiredWarnings);
     } catch (err) {
       setPaymentSaveError(err instanceof Error ? err.message : String(err));
     }
@@ -1112,21 +1262,43 @@ function App() {
   };
   const saveOutgoing = async (e) => {
     e.preventDefault();
-    if (!outgoingForm.subject || !outgoingForm.memoNo || !outgoingForm.date) return;
-    const body = {
-      subject: outgoingForm.subject.trim().slice(0, MAX_OUTGOING_SUBJECT_LENGTH),
-      memoNo: outgoingForm.memoNo.trim().replace(OUTGOING_MEMO_NO_ALLOWED, "").slice(0, MAX_OUTGOING_MEMO_NO_LENGTH),
-      date: outgoingForm.date,
-      thru: outgoingForm.thru,
-      forDept: outgoingForm.forDept,
-    };
-    setOutgoingSaving(true);
     setOutgoingSaveError("");
+
+    if (thruAddVisible || forAddVisible) {
+      setOutgoingSaveError("Save or cancel the new department before adding the outgoing record.");
+      return;
+    }
+
+    const required = {
+      subject: !outgoingForm.subject.trim(),
+      memoNo: !outgoingForm.memoNo.trim(),
+      date: !outgoingForm.date?.trim(),
+      thru: !outgoingForm.thru?.trim(),
+      forDept: !outgoingForm.forDept?.trim(),
+    };
+    if (Object.values(required).some(Boolean)) {
+      setOutgoingRequiredWarnings(required);
+      showRequiredFieldsAlert();
+      return;
+    }
+    setOutgoingRequiredWarnings(blankOutgoingRequiredWarnings);
+
+    const subject = outgoingForm.subject.trim().slice(0, MAX_OUTGOING_SUBJECT_LENGTH);
+    const memoNo = outgoingForm.memoNo.trim().replace(OUTGOING_MEMO_NO_ALLOWED, "").slice(0, MAX_OUTGOING_MEMO_NO_LENGTH);
+    const date = outgoingForm.date.trim();
+    const thru = outgoingForm.thru.trim();
+    const forDept = outgoingForm.forDept.trim();
+
+    if (!memoNo) {
+      setOutgoingSaveError("Memo number is required (letters, numbers, and hyphens only).");
+      return;
+    }
+
+    const body = { subject, memoNo, date, thru, forDept };
+    setOutgoingSaving(true);
     try {
-      const url = outgoingEdit != null ? `/api/outgoing/${outgoingEdit}` : "/api/outgoing";
-      const method = outgoingEdit != null ? "PUT" : "POST";
-      const res = await fetch(url, {
-        method,
+      const res = await fetch("/api/outgoing", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
@@ -1135,11 +1307,68 @@ function App() {
       try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
       if (!res.ok) throw new Error((data && data.message) || raw || "Save failed");
       const saved = data;
-      setOutgoing((cur) => (outgoingEdit != null ? cur.map((x) => (x.id === outgoingEdit ? saved : x)) : [saved, ...cur]));
+      setOutgoing((cur) => [saved, ...cur]);
       setOutgoingForm(blankOutgoing);
-      setOutgoingEdit(null);
       setOutgoingSubjectWarning(false);
       setOutgoingMemoNoWarning({ invalidChars: false, maxLength: false });
+      setOutgoingRequiredWarnings(blankOutgoingRequiredWarnings);
+      setThruAddVisible(false);
+      setThruAddDraft("");
+      setThruAddError("");
+      setForAddVisible(false);
+      setForAddDraft("");
+      setForAddError("");
+    } catch (err) {
+      setOutgoingSaveError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setOutgoingSaving(false);
+    }
+  };
+  const saveOutgoingEdit = async (e) => {
+    e.preventDefault();
+    if (outgoingEdit == null) return;
+    setOutgoingSaveError("");
+
+    if (thruAddVisible || forAddVisible) {
+      setOutgoingSaveError("Save or cancel the new department before saving.");
+      return;
+    }
+
+    const subject = outgoingEditForm.subject.trim().slice(0, MAX_OUTGOING_SUBJECT_LENGTH);
+    const memoNo = outgoingEditForm.memoNo.trim().replace(OUTGOING_MEMO_NO_ALLOWED, "").slice(0, MAX_OUTGOING_MEMO_NO_LENGTH);
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const date = outgoingEditForm.date?.trim() || outgoing.find((x) => x.id === outgoingEdit)?.date || todayStr;
+    const thru = outgoingEditForm.thru?.trim() || thruDeptOptions[0] || BASE_THRU[0] || "";
+    const forDept = outgoingEditForm.forDept?.trim() || forDeptOptions[0] || BASE_FOR[0] || "";
+
+    if (!subject) {
+      setOutgoingSaveError("Subject is required.");
+      return;
+    }
+    if (!memoNo) {
+      setOutgoingSaveError("Memo number is required (letters, numbers, and hyphens only).");
+      return;
+    }
+    if (!thru || !forDept) {
+      setOutgoingSaveError("Thru and For departments are required.");
+      return;
+    }
+
+    const body = { subject, memoNo, date, thru, forDept };
+    setOutgoingSaving(true);
+    try {
+      const res = await fetch(`/api/outgoing/${outgoingEdit}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const raw = await res.text();
+      let data;
+      try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
+      if (!res.ok) throw new Error((data && data.message) || raw || "Save failed");
+      const saved = data;
+      setOutgoing((cur) => cur.map((x) => (x.id === outgoingEdit ? saved : x)));
+      closeOutgoingEditModal();
     } catch (err) {
       setOutgoingSaveError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -1176,7 +1405,7 @@ function App() {
   const paymentExport = () => exportCsv("dv-payment-monitoring.csv", [["Title of the Project", "Name and Address of Claimant", "Voucher No.", "Date", "Amount", "ICTSSD", "GAD", "CASH"], ...paymentRows.map((x) => [x.title, x.claimantAddress, x.voucherNo, x.date || "", x.amount, x.ictssd, x.gad, x.cash])]);
   const outgoingExport = () => exportCsv("issd-outgoing-monitoring.csv", [["Subject", "Memo Number", "Date", "Thru", "For"], ...outgoingRows.map((x) => [x.subject, x.memoNo, x.date, x.thru, x.forDept])]);
 
-  const commitDepartmentAdd = async (kind, draft, options, formField, setError, setVisible, setDraft) => {
+  const commitDepartmentAdd = async (kind, draft, options, formField, setError, setVisible, setDraft, setForm) => {
     const t = draft.trim().slice(0, MAX_DEPARTMENT_NAME_LENGTH);
     if (!t) {
       setError("Enter a name.");
@@ -1198,7 +1427,7 @@ function App() {
       try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
       if (!res.ok) throw new Error((data && data.message) || raw || "Save failed");
       setDepartments((cur) => [...cur, data]);
-      setOutgoingForm((f) => ({ ...f, [formField]: t }));
+      setForm((f) => ({ ...f, [formField]: t }));
       setDraft("");
       setVisible(false);
     } catch (e) {
@@ -1206,13 +1435,19 @@ function App() {
     }
   };
 
-  const outgoingDeptPickers = (
+  const renderOutgoingDeptPickers = (form, setForm, thruId, forId, requiredWarnings, setRequiredWarnings) => (
     <div className="form-row form-row--dept-pickers">
       <DeptSelectWithAdd
         label="Thru"
-        id="outgoing-thru-select"
-        value={outgoingForm.thru}
-        onChange={(e) => setOutgoingForm({ ...outgoingForm, thru: e.target.value })}
+        id={thruId}
+        value={form.thru}
+        requiredMark={Boolean(requiredWarnings)}
+        requiredWarning={Boolean(requiredWarnings?.thru)}
+        showPlaceholderOption={Boolean(requiredWarnings)}
+        onChange={(e) => {
+          setForm({ ...form, thru: e.target.value });
+          setRequiredWarnings?.((w) => ({ ...w, thru: false }));
+        }}
         options={thruDeptOptions}
         addVisible={thruAddVisible}
         onAddOpen={() => {
@@ -1234,14 +1469,20 @@ function App() {
           setThruAddError("");
         }}
         addError={thruAddError}
-        onAddCommit={() => void commitDepartmentAdd("thru", thruAddDraft, thruDeptOptions, "thru", setThruAddError, setThruAddVisible, setThruAddDraft)}
-        addAriaLabel="Add Thru department"
+        onAddCommit={() => void commitDepartmentAdd("thru", thruAddDraft, thruDeptOptions, "thru", setThruAddError, setThruAddVisible, setThruAddDraft, setForm)}
+        addAriaLabel="Add Department"
       />
       <DeptSelectWithAdd
         label="For"
-        id="outgoing-for-select"
-        value={outgoingForm.forDept}
-        onChange={(e) => setOutgoingForm({ ...outgoingForm, forDept: e.target.value })}
+        id={forId}
+        value={form.forDept}
+        requiredMark={Boolean(requiredWarnings)}
+        requiredWarning={Boolean(requiredWarnings?.forDept)}
+        showPlaceholderOption={Boolean(requiredWarnings)}
+        onChange={(e) => {
+          setForm({ ...form, forDept: e.target.value });
+          setRequiredWarnings?.((w) => ({ ...w, forDept: false }));
+        }}
         options={forDeptOptions}
         addVisible={forAddVisible}
         onAddOpen={() => {
@@ -1263,10 +1504,715 @@ function App() {
           setForAddError("");
         }}
         addError={forAddError}
-        onAddCommit={() => void commitDepartmentAdd("for", forAddDraft, forDeptOptions, "forDept", setForAddError, setForAddVisible, setForAddDraft)}
-        addAriaLabel="Add For department"
+        onAddCommit={() => void commitDepartmentAdd("for", forAddDraft, forDeptOptions, "forDept", setForAddError, setForAddVisible, setForAddDraft, setForm)}
+        addAriaLabel="Add Department"
       />
     </div>
+  );
+  const outgoingDeptPickers = renderOutgoingDeptPickers(
+    outgoingForm,
+    setOutgoingForm,
+    "outgoing-thru-select",
+    "outgoing-for-select",
+    outgoingRequiredWarnings,
+    setOutgoingRequiredWarnings,
+  );
+  const outgoingEditDeptPickers = renderOutgoingDeptPickers(
+    outgoingEditForm,
+    setOutgoingEditForm,
+    "outgoing-edit-thru-select",
+    "outgoing-edit-for-select",
+  );
+
+  const projectAddRecordForm = (
+    <form className="record-form" onSubmit={saveProject}>
+      <label>
+        <span>Name of Contract *</span>
+        <input
+          type="text"
+          autoComplete="off"
+          value={projectForm.contractName}
+          onChange={(e) => {
+            const raw = e.target.value;
+            const maxLen = MAX_PROJECT_CONTRACT_NAME_LENGTH;
+            const capped = raw.slice(0, maxLen);
+            setProjectForm({ ...projectForm, contractName: capped });
+            setProjectRequiredWarnings((w) => ({ ...w, contractName: false }));
+            setProjectMoneyWarnings((w) => ({ ...w, contractName: { maxLength: raw.length > maxLen } }));
+          }}
+          onBlur={() => {
+            setProjectMoneyWarnings((w) => ({ ...w, contractName: { maxLength: false } }));
+          }}
+          placeholder="Enter contract title"
+          aria-invalid={projectRequiredWarnings.contractName || projectMoneyWarnings.contractName.maxLength}
+        />
+        <div className="form-field-warning-slot">
+          {projectRequiredWarnings.contractName ? (
+            <p className="form-field-warning" role="alert">{OUTGOING_REQUIRED_MSG}</p>
+          ) : null}
+          {!projectRequiredWarnings.contractName && projectMoneyWarnings.contractName.maxLength ? (
+            <p className="form-field-warning" role="alert">{`At most ${MAX_PROJECT_CONTRACT_NAME_LENGTH} characters are allowed.`}</p>
+          ) : null}
+        </div>
+      </label>
+      <div className="form-row form-row--project-start-duration">
+        <label>
+          <span>Start Date *</span>
+          <input
+            type="date"
+            title="Choose a date using the calendar"
+            value={projectForm.date}
+            onKeyDown={blockDateFieldDirectEntry}
+            onPaste={(e) => e.preventDefault()}
+            onCut={(e) => e.preventDefault()}
+            onChange={(e) => {
+              setProjectForm({ ...projectForm, date: e.target.value });
+              setProjectRequiredWarnings((w) => ({ ...w, date: false }));
+            }}
+            aria-invalid={projectRequiredWarnings.date}
+          />
+          <div className="form-field-warning-slot">
+            {projectRequiredWarnings.date ? (
+              <p className="form-field-warning" role="alert">{OUTGOING_REQUIRED_MSG}</p>
+            ) : null}
+          </div>
+        </label>
+        <label>
+          <span>Duration *</span>
+          <input
+            type="text"
+            autoComplete="off"
+            value={projectForm.duration}
+            onChange={(e) => {
+              const raw = e.target.value;
+              const maxLen = MAX_PROJECT_DURATION_LENGTH;
+              const capped = raw.slice(0, maxLen);
+              setProjectForm({ ...projectForm, duration: capped });
+              setProjectRequiredWarnings((w) => ({ ...w, duration: false }));
+              setProjectMoneyWarnings((w) => ({ ...w, duration: { maxLength: raw.length > maxLen } }));
+            }}
+            onBlur={() => {
+              setProjectMoneyWarnings((w) => ({ ...w, duration: { maxLength: false } }));
+            }}
+            placeholder="e.g. 120 days, 12 weeks, 6 months, 1 year"
+            aria-invalid={projectRequiredWarnings.duration || projectMoneyWarnings.duration.maxLength}
+          />
+          <div className="form-field-warning-slot">
+            {projectRequiredWarnings.duration ? (
+              <p className="form-field-warning" role="alert">{OUTGOING_REQUIRED_MSG}</p>
+            ) : null}
+            {!projectRequiredWarnings.duration && projectMoneyWarnings.duration.maxLength ? (
+              <p className="form-field-warning" role="alert">{`At most ${MAX_PROJECT_DURATION_LENGTH} characters are allowed.`}</p>
+            ) : null}
+          </div>
+        </label>
+      </div>
+      <label>
+        <span>End Date</span>
+        <input
+          type="text"
+          readOnly
+          tabIndex={-1}
+          className="form-field-computed"
+          value={projectEndDateYmd ? fmtDate(projectEndDateYmd) : ""}
+          placeholder="Set start date and duration"
+          title="Computed from start date plus duration. Use days, weeks, months, or years (e.g. 90 days, 8 wks, 3 mo, 2 years). A plain number defaults to days."
+        />
+        <div className="form-field-warning-slot" />
+      </label>
+      <div className="form-label-with-action">
+        <div className="form-label-with-action__row">
+          <label className="form-label-with-action__text" htmlFor="project-goods-select">
+            <span>Kind of Goods *</span>
+          </label>
+          {goodsAddVisible ? (
+            <button
+              type="button"
+              className="goods-cancel-btn"
+              aria-label="Cancel"
+              onClick={() => {
+                setGoodsAddVisible(false);
+                setGoodsAddDraft("");
+                setGoodsAddError("");
+              }}
+            >
+              <span className="goods-btn__icon">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <line x1="4" y1="4" x2="12" y2="12" />
+                  <line x1="12" y1="4" x2="4" y2="12" />
+                </svg>
+              </span>
+              <span className="goods-btn__label">Cancel</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="goods-add-btn"
+              aria-label="Add goods"
+              onClick={() => {
+                setGoodsAddError("");
+                setGoodsAddDraft("");
+                setGoodsAddVisible(true);
+              }}
+            >
+              <span className="goods-btn__icon">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <line x1="8" y1="2" x2="8" y2="14" />
+                  <line x1="2" y1="8" x2="14" y2="8" />
+                </svg>
+              </span>
+              <span className="goods-btn__label">Add Goods</span>
+            </button>
+          )}
+        </div>
+        {goodsAddVisible ? (
+          <div className="form-inline-add-goods">
+            <input
+              type="text"
+              value={goodsAddDraft}
+              onChange={(e) => {
+                setGoodsAddDraft(e.target.value);
+                setGoodsAddError("");
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  addGoodsCommit();
+                }
+              }}
+              placeholder="e.g. Vehicles"
+              aria-label="New kind of goods"
+            />
+            <button type="button" className="ghost-button ghost-button--compact" onClick={addGoodsCommit}>
+              Add
+            </button>
+          </div>
+        ) : null}
+        {goodsAddError ? (
+          <p className="form-field-warning form-field-warning--tight" role="alert">
+            {goodsAddError}
+          </p>
+        ) : null}
+        {(goodsRenameVisible || goodsAddVisible) ? (
+          <select
+            id="project-goods-select"
+            className="form-goods-select form-goods-select--visual-hide"
+            value={projectForm.goods}
+            onChange={(e) => {
+              setProjectForm({ ...projectForm, goods: e.target.value });
+              setGoodsRenameError("");
+              setGoodsSelectError("");
+            }}
+            tabIndex={-1}
+            aria-label="Current kind of goods"
+          >
+            {goodsOptions.map((g) => (
+              <option key={g}>{g}</option>
+            ))}
+          </select>
+        ) : (
+          <div className="form-goods-select-row">
+            <select
+              id="project-goods-select"
+              className="form-goods-select"
+              value={projectForm.goods}
+              onChange={(e) => {
+                setProjectForm({ ...projectForm, goods: e.target.value });
+                setGoodsRenameError("");
+                setGoodsSelectError("");
+              }}
+            >
+              {goodsOptions.map((g) => (
+                <option key={g}>{g}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="form-goods-select__icon-btn"
+              aria-label="Rename kind of goods"
+              title="Renames this kind and updates every project that uses it in the database"
+              onClick={() => {
+                setGoodsSelectError("");
+                setGoodsRenameError("");
+                setGoodsRenameDraft(projectForm.goods);
+                setGoodsRenameVisible(true);
+              }}
+            >
+              <GoodsEditIcon />
+            </button>
+            <button
+              type="button"
+              className="form-goods-select__icon-btn form-goods-select__icon-btn--danger"
+              aria-label="Remove or hide kind from list"
+              title="Hides a built-in kind from the list, or removes a kind you added with Add Goods."
+              disabled={
+                !BASE_GOODS.includes(projectForm.goods) && !extraGoods.some((x) => x === projectForm.goods)
+              }
+              onClick={() => void deleteGoodsKind()}
+            >
+              <GoodsTrashIcon />
+            </button>
+          </div>
+        )}
+        {goodsRenameVisible ? (
+          <div className="form-inline-add-goods form-inline-add-goods--rename">
+            <input
+              type="text"
+              value={goodsRenameDraft}
+              onChange={(e) => {
+                setGoodsRenameDraft(e.target.value);
+                setGoodsRenameError("");
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void renameGoodsCommit();
+                }
+              }}
+              placeholder="New name"
+              aria-label="Rename kind of goods"
+            />
+            <button type="button" className="ghost-button ghost-button--compact" onClick={() => void renameGoodsCommit()}>
+              Save
+            </button>
+            <button
+              type="button"
+              className="ghost-button ghost-button--compact"
+              onClick={() => {
+                setGoodsRenameVisible(false);
+                setGoodsRenameError("");
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        ) : null}
+        {(goodsRenameError || goodsSelectError) ? (
+          <p className="form-field-warning form-field-warning--tight" role="alert">
+            {goodsRenameError || goodsSelectError}
+          </p>
+        ) : null}
+      </div>
+      <div className="form-row form-row--money-warnings">
+        <label>
+          <span>Amount of Contract *</span>
+          <input
+            type="text"
+            inputMode="decimal"
+            autoComplete="off"
+            value={projectForm.amount}
+            onChange={(e) => {
+              const st = projectMoneyParseState(e.target.value);
+              setProjectForm({ ...projectForm, amount: st.display });
+              setProjectRequiredWarnings((w) => ({ ...w, amount: false }));
+              setProjectMoneyWarnings((w) => ({
+                ...w,
+                amount: { invalidChars: st.hadInvalidChars, maxDigits: st.digitLimitExceeded },
+              }));
+            }}
+            placeholder="0.00"
+            aria-invalid={
+              projectRequiredWarnings.amount ||
+              projectMoneyWarnings.amount.invalidChars ||
+              projectMoneyWarnings.amount.maxDigits
+            }
+          />
+          <div className="form-field-warning-slot">
+            {projectRequiredWarnings.amount ? (
+              <p className="form-field-warning" role="alert">{OUTGOING_REQUIRED_MSG}</p>
+            ) : null}
+            {!projectRequiredWarnings.amount &&
+            (projectMoneyWarnings.amount.invalidChars || projectMoneyWarnings.amount.maxDigits) ? (
+              <p className="form-field-warning" role="alert">
+                {projectMoneyWarnings.amount.invalidChars ? "Only numbers, commas, and periods are allowed. " : null}
+                {projectMoneyWarnings.amount.maxDigits
+                  ? `At most ${MAX_PROJECT_MONEY_INT_DIGITS} integer digits and ${MAX_PROJECT_MONEY_FRAC_DIGITS} decimal places are allowed.`
+                  : null}
+              </p>
+            ) : null}
+          </div>
+        </label>
+        <label>
+          <span>Outstanding Value *</span>
+          <input
+            type="text"
+            inputMode="decimal"
+            autoComplete="off"
+            value={projectForm.outstanding}
+            onChange={(e) => {
+              const st = projectMoneyParseState(e.target.value);
+              setProjectForm({ ...projectForm, outstanding: st.display });
+              setProjectRequiredWarnings((w) => ({ ...w, outstanding: false }));
+              setProjectMoneyWarnings((w) => ({
+                ...w,
+                outstanding: { invalidChars: st.hadInvalidChars, maxDigits: st.digitLimitExceeded },
+              }));
+            }}
+            placeholder="0.00"
+            aria-invalid={
+              projectRequiredWarnings.outstanding ||
+              projectMoneyWarnings.outstanding.invalidChars ||
+              projectMoneyWarnings.outstanding.maxDigits
+            }
+          />
+          <div className="form-field-warning-slot">
+            {projectRequiredWarnings.outstanding ? (
+              <p className="form-field-warning" role="alert">{OUTGOING_REQUIRED_MSG}</p>
+            ) : null}
+            {!projectRequiredWarnings.outstanding &&
+            (projectMoneyWarnings.outstanding.invalidChars || projectMoneyWarnings.outstanding.maxDigits) ? (
+              <p className="form-field-warning" role="alert">
+                {projectMoneyWarnings.outstanding.invalidChars ? "Only numbers, commas, and periods are allowed. " : null}
+                {projectMoneyWarnings.outstanding.maxDigits
+                  ? `At most ${MAX_PROJECT_MONEY_INT_DIGITS} integer digits and ${MAX_PROJECT_MONEY_FRAC_DIGITS} decimal places are allowed.`
+                  : null}
+              </p>
+            ) : null}
+          </div>
+        </label>
+      </div>
+      <div className="form-actions">
+        <button type="submit" className="primary-button" disabled={projectSaving}>
+          {projectSaving ? "Saving…" : "Add project"}
+        </button>
+        <button
+          type="button"
+          className="ghost-button"
+          onClick={() => {
+            setProjectEdit(null);
+            setProjectForm(blankProject);
+            setProjectMoneyWarnings(blankProjectMoneyWarnings);
+            setProjectRequiredWarnings(blankProjectRequiredWarnings);
+            setGoodsAddVisible(false);
+            setGoodsAddDraft("");
+            setGoodsAddError("");
+            setGoodsRenameVisible(false);
+            setGoodsRenameDraft("");
+            setGoodsRenameError("");
+            setGoodsSelectError("");
+            setProjectSaveError("");
+          }}
+        >
+          Clear form
+        </button>
+      </div>
+    </form>
+  );
+
+  const outgoingAddRecordForm = (
+    <form className="record-form" onSubmit={saveOutgoing}>
+      <label>
+        <span>Subject *</span>
+        <textarea
+          value={outgoingForm.subject}
+          onChange={(e) => {
+            const raw = e.target.value;
+            const capped = raw.slice(0, MAX_OUTGOING_SUBJECT_LENGTH);
+            setOutgoingForm({ ...outgoingForm, subject: capped });
+            setOutgoingRequiredWarnings((w) => ({ ...w, subject: false }));
+            setOutgoingSubjectWarning(raw.length > MAX_OUTGOING_SUBJECT_LENGTH);
+          }}
+          onBlur={() => setOutgoingSubjectWarning(false)}
+          placeholder="Enter the memo subject"
+          aria-invalid={outgoingRequiredWarnings.subject || outgoingSubjectWarning}
+        />
+        <div className="form-field-warning-slot">
+          {outgoingRequiredWarnings.subject ? (
+            <p className="form-field-warning" role="alert">{OUTGOING_REQUIRED_MSG}</p>
+          ) : null}
+          {!outgoingRequiredWarnings.subject && outgoingSubjectWarning ? (
+            <p className="form-field-warning" role="alert">{`At most ${MAX_OUTGOING_SUBJECT_LENGTH} characters are allowed.`}</p>
+          ) : null}
+        </div>
+      </label>
+      <div className="form-row">
+        <label>
+          <span>Memo Number *</span>
+          <input
+            type="text"
+            autoComplete="off"
+            value={outgoingForm.memoNo}
+            onChange={(e) => {
+              const raw = e.target.value;
+              const allowedOnly = raw.replace(OUTGOING_MEMO_NO_ALLOWED, "");
+              const capped = allowedOnly.slice(0, MAX_OUTGOING_MEMO_NO_LENGTH);
+              setOutgoingForm({ ...outgoingForm, memoNo: capped });
+              setOutgoingRequiredWarnings((w) => ({ ...w, memoNo: false }));
+              setOutgoingMemoNoWarning({
+                invalidChars: OUTGOING_MEMO_NO_DISALLOWED.test(raw),
+                maxLength: allowedOnly.length > MAX_OUTGOING_MEMO_NO_LENGTH,
+              });
+            }}
+            onBlur={() => setOutgoingMemoNoWarning({ invalidChars: false, maxLength: false })}
+            placeholder="ISSD-YYYY-000"
+            aria-invalid={
+              outgoingRequiredWarnings.memoNo || outgoingMemoNoWarning.invalidChars || outgoingMemoNoWarning.maxLength
+            }
+          />
+          <div className="form-field-warning-slot">
+            {outgoingRequiredWarnings.memoNo ? (
+              <p className="form-field-warning" role="alert">{OUTGOING_REQUIRED_MSG}</p>
+            ) : null}
+            {!outgoingRequiredWarnings.memoNo && (outgoingMemoNoWarning.invalidChars || outgoingMemoNoWarning.maxLength) ? (
+              <p className="form-field-warning" role="alert">
+                {outgoingMemoNoWarning.invalidChars ? "Only letters, numbers, and hyphens are allowed. " : null}
+                {outgoingMemoNoWarning.maxLength ? `At most ${MAX_OUTGOING_MEMO_NO_LENGTH} characters are allowed.` : null}
+              </p>
+            ) : null}
+          </div>
+        </label>
+        <label>
+          <span>Date *</span>
+          <input
+            type="date"
+            title="Choose a date using the calendar"
+            value={outgoingForm.date}
+            onKeyDown={blockDateFieldDirectEntry}
+            onPaste={(e) => e.preventDefault()}
+            onCut={(e) => e.preventDefault()}
+            onChange={(e) => {
+              setOutgoingForm({ ...outgoingForm, date: e.target.value });
+              setOutgoingRequiredWarnings((w) => ({ ...w, date: false }));
+            }}
+            aria-invalid={outgoingRequiredWarnings.date}
+          />
+          <div className="form-field-warning-slot">
+            {outgoingRequiredWarnings.date ? (
+              <p className="form-field-warning" role="alert">{OUTGOING_REQUIRED_MSG}</p>
+            ) : null}
+          </div>
+        </label>
+      </div>
+      {outgoingDeptPickers}
+      <div className="form-actions">
+        <button type="submit" className="primary-button" disabled={outgoingSaving}>
+          {outgoingSaving ? "Adding…" : "Add outgoing"}
+        </button>
+        <button
+          type="button"
+          className="ghost-button"
+          onClick={() => {
+            setOutgoingForm(blankOutgoing);
+            setOutgoingSaveError("");
+            setOutgoingSubjectWarning(false);
+            setOutgoingMemoNoWarning({ invalidChars: false, maxLength: false });
+            setOutgoingRequiredWarnings(blankOutgoingRequiredWarnings);
+            setThruAddVisible(false);
+            setThruAddDraft("");
+            setThruAddError("");
+            setForAddVisible(false);
+            setForAddDraft("");
+            setForAddError("");
+          }}
+        >
+          Clear form
+        </button>
+      </div>
+      {outgoingSaveError && !outgoingEditModal ? (
+        <p className="form-save-error" role="alert">
+          {outgoingSaveError}
+        </p>
+      ) : null}
+    </form>
+  );
+
+  const paymentAddRecordForm = (
+    <form className="record-form" onSubmit={savePayment}>
+      <label>
+        <span>Title of the Project *</span>
+        <input
+          type="text"
+          autoComplete="off"
+          value={paymentForm.title}
+          onChange={(e) => {
+            const raw = e.target.value;
+            const capped = raw.slice(0, MAX_DV_TITLE_LENGTH);
+            setPaymentForm({ ...paymentForm, title: capped });
+            setPaymentRequiredWarnings((w) => ({ ...w, title: false }));
+            setDvTitleWarning(raw.length > MAX_DV_TITLE_LENGTH);
+          }}
+          onBlur={() => setDvTitleWarning(false)}
+          placeholder="Enter project title"
+          aria-invalid={paymentRequiredWarnings.title || dvTitleWarning}
+        />
+        <div className="form-field-warning-slot">
+          {paymentRequiredWarnings.title ? (
+            <p className="form-field-warning" role="alert">{OUTGOING_REQUIRED_MSG}</p>
+          ) : null}
+          {!paymentRequiredWarnings.title && dvTitleWarning ? (
+            <p className="form-field-warning" role="alert">{`At most ${MAX_DV_TITLE_LENGTH} characters are allowed.`}</p>
+          ) : null}
+        </div>
+      </label>
+      <label>
+        <span>Name and Address of Claimant *</span>
+        <textarea
+          value={paymentForm.claimantAddress}
+          onChange={(e) => {
+            const raw = e.target.value;
+            const capped = raw.slice(0, MAX_DV_CLAIMANT_LENGTH);
+            setPaymentForm({ ...paymentForm, claimantAddress: capped });
+            setPaymentRequiredWarnings((w) => ({ ...w, claimantAddress: false }));
+            setDvClaimantWarning(raw.length > MAX_DV_CLAIMANT_LENGTH);
+          }}
+          onBlur={() => setDvClaimantWarning(false)}
+          placeholder="Enter claimant name and address"
+          aria-invalid={paymentRequiredWarnings.claimantAddress || dvClaimantWarning}
+        />
+        <div className="form-field-warning-slot">
+          {paymentRequiredWarnings.claimantAddress ? (
+            <p className="form-field-warning" role="alert">{OUTGOING_REQUIRED_MSG}</p>
+          ) : null}
+          {!paymentRequiredWarnings.claimantAddress && dvClaimantWarning ? (
+            <p className="form-field-warning" role="alert">{`At most ${MAX_DV_CLAIMANT_LENGTH} characters are allowed.`}</p>
+          ) : null}
+        </div>
+      </label>
+      <div className="form-row form-row--money-warnings">
+        <label>
+          <span>Voucher No. *</span>
+          <input
+            type="text"
+            inputMode="numeric"
+            autoComplete="off"
+            value={paymentForm.voucherNo}
+            onChange={(e) => {
+              const raw = e.target.value;
+              const digitsOnly = raw.replace(/\D/g, "");
+              const capped = digitsOnly.slice(0, MAX_DV_VOUCHER_LENGTH);
+              setPaymentForm({ ...paymentForm, voucherNo: capped });
+              setPaymentRequiredWarnings((w) => ({ ...w, voucherNo: false }));
+              setDvVoucherWarning({
+                nonNumeric: /\D/.test(raw),
+                maxLength: digitsOnly.length > MAX_DV_VOUCHER_LENGTH,
+              });
+            }}
+            onBlur={() => setDvVoucherWarning({ nonNumeric: false, maxLength: false })}
+            placeholder="Enter voucher number"
+            aria-invalid={
+              paymentRequiredWarnings.voucherNo || dvVoucherWarning.nonNumeric || dvVoucherWarning.maxLength
+            }
+          />
+          <div className="form-field-warning-slot">
+            {paymentRequiredWarnings.voucherNo ? (
+              <p className="form-field-warning" role="alert">{OUTGOING_REQUIRED_MSG}</p>
+            ) : null}
+            {!paymentRequiredWarnings.voucherNo && (dvVoucherWarning.nonNumeric || dvVoucherWarning.maxLength) ? (
+              <p className="form-field-warning" role="alert">
+                {dvVoucherWarning.nonNumeric ? "Numbers only. " : null}
+                {dvVoucherWarning.maxLength ? `At most ${MAX_DV_VOUCHER_LENGTH} digits are allowed.` : null}
+              </p>
+            ) : null}
+          </div>
+        </label>
+        <label>
+          <span>Amount *</span>
+          <input
+            type="text"
+            inputMode="decimal"
+            autoComplete="off"
+            value={paymentForm.amount}
+            onChange={(e) => {
+              const st = projectMoneyParseState(e.target.value);
+              setPaymentForm({ ...paymentForm, amount: st.display });
+              setPaymentRequiredWarnings((w) => ({ ...w, amount: false }));
+              setDvAmountWarning({ invalidChars: st.hadInvalidChars, maxDigits: st.digitLimitExceeded });
+            }}
+            onBlur={() => setDvAmountWarning({ invalidChars: false, maxDigits: false })}
+            placeholder="0.00"
+            aria-invalid={paymentRequiredWarnings.amount || dvAmountWarning.invalidChars || dvAmountWarning.maxDigits}
+          />
+          <div className="form-field-warning-slot">
+            {paymentRequiredWarnings.amount ? (
+              <p className="form-field-warning" role="alert">{OUTGOING_REQUIRED_MSG}</p>
+            ) : null}
+            {!paymentRequiredWarnings.amount && (dvAmountWarning.invalidChars || dvAmountWarning.maxDigits) ? (
+              <p className="form-field-warning" role="alert">
+                {dvAmountWarning.invalidChars ? "Only numbers, commas, and periods are allowed. " : null}
+                {dvAmountWarning.maxDigits
+                  ? `At most ${MAX_PROJECT_MONEY_INT_DIGITS} integer digits and ${MAX_PROJECT_MONEY_FRAC_DIGITS} decimal places are allowed.`
+                  : null}
+              </p>
+            ) : null}
+          </div>
+        </label>
+        <label>
+          <span>Record date *</span>
+          <input
+            type="date"
+            title="Choose a date using the calendar"
+            value={paymentForm.date}
+            onKeyDown={blockDateFieldDirectEntry}
+            onPaste={(e) => e.preventDefault()}
+            onCut={(e) => e.preventDefault()}
+            onChange={(e) => {
+              setPaymentForm({ ...paymentForm, date: e.target.value });
+              setPaymentRequiredWarnings((w) => ({ ...w, date: false }));
+            }}
+            aria-invalid={paymentRequiredWarnings.date}
+          />
+          <div className="form-field-warning-slot">
+            {paymentRequiredWarnings.date ? (
+              <p className="form-field-warning" role="alert">{OUTGOING_REQUIRED_MSG}</p>
+            ) : null}
+          </div>
+        </label>
+      </div>
+      <div className="form-row form-row--triple">
+        <label>
+          <span>ICTSSD (Department) *</span>
+          <select value={paymentForm.ictssd} onChange={(e) => setPaymentForm({ ...paymentForm, ictssd: e.target.value })}>
+            {ICTSSD.map((o) => (
+              <option key={o}>{o}</option>
+            ))}
+          </select>
+          <div className="form-field-warning-slot" />
+        </label>
+        <label>
+          <span>GAD (Department) *</span>
+          <select value={paymentForm.gad} onChange={(e) => setPaymentForm({ ...paymentForm, gad: e.target.value })}>
+            {GAD.map((o) => (
+              <option key={o}>{o}</option>
+            ))}
+          </select>
+          <div className="form-field-warning-slot" />
+        </label>
+        <label>
+          <span>CASH (Department) *</span>
+          <select value={paymentForm.cash} onChange={(e) => setPaymentForm({ ...paymentForm, cash: e.target.value })}>
+            {CASH.map((o) => (
+              <option key={o}>{o}</option>
+            ))}
+          </select>
+          <div className="form-field-warning-slot" />
+        </label>
+      </div>
+      <div className="form-actions">
+        <button type="submit" className="primary-button">
+          Add DV record
+        </button>
+        <button
+          type="button"
+          className="ghost-button"
+          onClick={() => {
+            setPaymentForm(blankPayment);
+            setPaymentSaveError("");
+            setDvTitleWarning(false);
+            setDvClaimantWarning(false);
+            setDvVoucherWarning({ nonNumeric: false, maxLength: false });
+            setDvAmountWarning({ invalidChars: false, maxDigits: false });
+            setPaymentRequiredWarnings(blankPaymentRequiredWarnings);
+          }}
+        >
+          Clear form
+        </button>
+      </div>
+      {paymentSaveError && !paymentEditModal ? (
+        <p className="form-save-error" role="alert">
+          {paymentSaveError}
+        </p>
+      ) : null}
+    </form>
   );
 
   const summaryExport = () => exportCsv("monitoring-summary.csv", [
@@ -1478,27 +2424,18 @@ function App() {
                 {projectSaveError ? <div>{projectSaveError}</div> : null}
               </div>
             )}
-            <section className="panel metric-panel"><div className="metric-section"><div className="inline-stat-grid"><MetricChip label="Total of contracts" value={number.format(projects.length)} /><MetricChip label="Total of contract value" value={peso.format(stats.totalContractValue)} /><MetricChip label="Total of outstanding" value={peso.format(stats.totalOutstandingValue)} /></div></div></section><section className="panel form-panel"><div className="panel__header"><div><p className="panel__kicker">Project Monitoring Tool</p><h3>Add new project</h3></div></div><form className="record-form" onSubmit={saveProject}><label><span>Name of Contract</span><input type="text" autoComplete="off" value={projectForm.contractName} onChange={(e) => { const raw = e.target.value; const maxLen = MAX_PROJECT_CONTRACT_NAME_LENGTH; const capped = raw.slice(0, maxLen); setProjectForm({ ...projectForm, contractName: capped }); setProjectMoneyWarnings((w) => ({ ...w, contractName: { maxLength: raw.length > maxLen } })); }} onBlur={() => { setProjectMoneyWarnings((w) => ({ ...w, contractName: { maxLength: false } })); }} placeholder="Enter contract title" aria-invalid={projectMoneyWarnings.contractName.maxLength} /><div className="form-field-warning-slot">{projectMoneyWarnings.contractName.maxLength ? (<p className="form-field-warning" role="alert">{`At most ${MAX_PROJECT_CONTRACT_NAME_LENGTH} characters are allowed.`}</p>) : null}</div></label><div className="form-row form-row--project-start-duration"><label><span>Start Date</span><input type="date" title="Choose a date using the calendar" value={projectForm.date} onKeyDown={blockDateFieldDirectEntry} onPaste={(e) => e.preventDefault()} onCut={(e) => e.preventDefault()} onChange={(e) => setProjectForm({ ...projectForm, date: e.target.value })} /><div className="form-field-warning-slot" /></label><label><span>Duration</span><input type="text" autoComplete="off" value={projectForm.duration} onChange={(e) => { const raw = e.target.value; const maxLen = MAX_PROJECT_DURATION_LENGTH; const capped = raw.slice(0, maxLen); setProjectForm({ ...projectForm, duration: capped }); setProjectMoneyWarnings((w) => ({ ...w, duration: { maxLength: raw.length > maxLen } })); }} onBlur={() => { setProjectMoneyWarnings((w) => ({ ...w, duration: { maxLength: false } })); }} placeholder="e.g. 120 days, 12 weeks, 6 months, 1 year" aria-invalid={projectMoneyWarnings.duration.maxLength} /><div className="form-field-warning-slot">{projectMoneyWarnings.duration.maxLength ? (<p className="form-field-warning" role="alert">{`At most ${MAX_PROJECT_DURATION_LENGTH} characters are allowed.`}</p>) : null}</div></label></div><label><span>End Date</span><input type="text" readOnly tabIndex={-1} className="form-field-computed" value={projectEndDateYmd ? fmtDate(projectEndDateYmd) : ""} placeholder="Set start date and duration" title="Computed from start date plus duration. Use days, weeks, months, or years (e.g. 90 days, 8 wks, 3 mo, 2 years). A plain number defaults to days." /><div className="form-field-warning-slot" /></label><div className="form-label-with-action"><div className="form-label-with-action__row"><label className="form-label-with-action__text" htmlFor="project-goods-select"><span>Kind of Goods</span></label>{goodsAddVisible ? (<button type="button" className="goods-cancel-btn" aria-label="Cancel" onClick={() => { setGoodsAddVisible(false); setGoodsAddDraft(""); setGoodsAddError(""); }}><span className="goods-btn__icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="4" y1="4" x2="12" y2="12"/><line x1="12" y1="4" x2="4" y2="12"/></svg></span><span className="goods-btn__label">Cancel</span></button>) : (<button type="button" className="goods-add-btn" aria-label="Add goods" onClick={() => { setGoodsAddError(""); setGoodsAddDraft(""); setGoodsAddVisible(true); }}><span className="goods-btn__icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="8" y1="2" x2="8" y2="14"/><line x1="2" y1="8" x2="14" y2="8"/></svg></span><span className="goods-btn__label">Add Goods</span></button>)}</div>{goodsAddVisible ? (<div className="form-inline-add-goods"><input type="text" value={goodsAddDraft} onChange={(e) => { setGoodsAddDraft(e.target.value); setGoodsAddError(""); }} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addGoodsCommit(); } }} placeholder="e.g. Vehicles" aria-label="New kind of goods" /><button type="button" className="ghost-button ghost-button--compact" onClick={addGoodsCommit}>Add</button></div>) : null}{goodsAddError ? (<p className="form-field-warning form-field-warning--tight" role="alert">{goodsAddError}</p>) : null}{(goodsRenameVisible || goodsAddVisible) ? (
-              <select id="project-goods-select" className="form-goods-select form-goods-select--visual-hide" value={projectForm.goods} onChange={(e) => { setProjectForm({ ...projectForm, goods: e.target.value }); setGoodsRenameError(""); setGoodsSelectError(""); }} tabIndex={-1} aria-label="Current kind of goods">{goodsOptions.map((g) => <option key={g}>{g}</option>)}</select>
-            ) : (
-              <div className="form-goods-select-row">
-                <select id="project-goods-select" className="form-goods-select" value={projectForm.goods} onChange={(e) => { setProjectForm({ ...projectForm, goods: e.target.value }); setGoodsRenameError(""); setGoodsSelectError(""); }}>{goodsOptions.map((g) => <option key={g}>{g}</option>)}</select><button type="button" className="form-goods-select__icon-btn" aria-label="Rename kind of goods" title="Renames this kind and updates every project that uses it in the database" onClick={() => { setGoodsSelectError(""); setGoodsRenameError(""); setGoodsRenameDraft(projectForm.goods); setGoodsRenameVisible(true); }}><GoodsEditIcon /></button><button type="button" className="form-goods-select__icon-btn form-goods-select__icon-btn--danger" aria-label="Remove or hide kind from list" title="Hides a built-in kind from the list, or removes a kind you added with Add Goods." disabled={!BASE_GOODS.includes(projectForm.goods) && !extraGoods.some((x) => x === projectForm.goods)} onClick={() => void deleteGoodsKind()}><GoodsTrashIcon /></button></div>
-            )}{goodsRenameVisible ? (<div className="form-inline-add-goods form-inline-add-goods--rename"><input type="text" value={goodsRenameDraft} onChange={(e) => { setGoodsRenameDraft(e.target.value); setGoodsRenameError(""); }} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void renameGoodsCommit(); } }} placeholder="New name" aria-label="Rename kind of goods" /><button type="button" className="ghost-button ghost-button--compact" onClick={() => void renameGoodsCommit()}>Save</button><button type="button" className="ghost-button ghost-button--compact" onClick={() => { setGoodsRenameVisible(false); setGoodsRenameError(""); }}>Cancel</button></div>) : null}{(goodsRenameError || goodsSelectError) ? (<p className="form-field-warning form-field-warning--tight" role="alert">{goodsRenameError || goodsSelectError}</p>) : null}</div><div className="form-row form-row--money-warnings"><label><span>Amount of Contract</span><input type="text" inputMode="decimal" autoComplete="off" value={projectForm.amount} onChange={(e) => { const st = projectMoneyParseState(e.target.value); setProjectForm({ ...projectForm, amount: st.display }); setProjectMoneyWarnings((w) => ({ ...w, amount: { invalidChars: st.hadInvalidChars, maxDigits: st.digitLimitExceeded } })); }} placeholder="0.00" aria-invalid={projectMoneyWarnings.amount.invalidChars || projectMoneyWarnings.amount.maxDigits} /><div className="form-field-warning-slot">{(projectMoneyWarnings.amount.invalidChars || projectMoneyWarnings.amount.maxDigits) ? (<p className="form-field-warning" role="alert">{projectMoneyWarnings.amount.invalidChars ? "Only numbers, commas, and periods are allowed. " : null}{projectMoneyWarnings.amount.maxDigits ? `At most ${MAX_PROJECT_MONEY_INT_DIGITS} integer digits and ${MAX_PROJECT_MONEY_FRAC_DIGITS} decimal places are allowed.` : null}</p>) : null}</div></label><label><span>Outstanding Value</span><input type="text" inputMode="decimal" autoComplete="off" value={projectForm.outstanding} onChange={(e) => { const st = projectMoneyParseState(e.target.value); setProjectForm({ ...projectForm, outstanding: st.display }); setProjectMoneyWarnings((w) => ({ ...w, outstanding: { invalidChars: st.hadInvalidChars, maxDigits: st.digitLimitExceeded } })); }} placeholder="0.00" aria-invalid={projectMoneyWarnings.outstanding.invalidChars || projectMoneyWarnings.outstanding.maxDigits} /><div className="form-field-warning-slot">{(projectMoneyWarnings.outstanding.invalidChars || projectMoneyWarnings.outstanding.maxDigits) ? (<p className="form-field-warning" role="alert">{projectMoneyWarnings.outstanding.invalidChars ? "Only numbers, commas, and periods are allowed. " : null}{projectMoneyWarnings.outstanding.maxDigits ? `At most ${MAX_PROJECT_MONEY_INT_DIGITS} integer digits and ${MAX_PROJECT_MONEY_FRAC_DIGITS} decimal places are allowed.` : null}</p>) : null}</div></label></div><div className="form-actions"><button type="submit" className="primary-button" disabled={projectSaving}>{projectSaving ? "Saving…" : "Add project"}</button><button type="button" className="ghost-button" onClick={() => {
-                  setProjectEdit(null);
-                  setProjectForm(blankProject);
-                  setProjectMoneyWarnings(blankProjectMoneyWarnings);
-                  setGoodsAddVisible(false);
-                  setGoodsAddDraft("");
-                  setGoodsAddError("");
-                  setGoodsRenameVisible(false);
-                  setGoodsRenameDraft("");
-                  setGoodsRenameError("");
-                  setGoodsSelectError("");
-                  setProjectSaveError("");
-                }}>Clear form</button></div></form></section><section className="panel table-panel">{toolbar("Project records", "Search, filter, and export contract monitoring data.", projectSearch, setProjectSearch, projectFilter, setProjectFilter, goodsFilterOptions, "Goods", projectExport)}<div className="table-wrap table-wrap--projects"><table><thead><tr><th>Name of Contract</th><th>Start Date</th><th>End Date</th><th>Duration</th><th>Kind of Goods</th><th>Amount of Contract</th><th>Outstanding Value</th><th>Actions</th></tr></thead><tbody>{projectsLoading ? <tr><td colSpan={8}>Loading projects…</td></tr> : pageSlice(projectRows, safeProjectPage).map((x) => <tr key={x.id}><td>{x.contractName}</td><td>{fmtDate(x.date)}</td><td>{formatProjectEndDateLabel(x.date, x.duration)}</td><td>{x.duration}</td><td>{x.goods}</td><td>{peso.format(x.amount)}</td><td>{peso.format(x.outstanding)}</td><td><ActionSet onView={() => open("Project", x.contractName, [["Start Date", fmtDate(x.date)], ["End Date", formatProjectEndDateLabel(x.date, x.duration)], ["Duration", x.duration], ["Kind of Goods", x.goods], ["Amount of Contract", peso.format(x.amount)], ["Outstanding Value", peso.format(x.outstanding)]])} onEdit={() => { setProjectEdit(x.id); const cn = String(x.contractName ?? ""); setEditMoneyWarnings({ ...blankProjectMoneyWarnings, contractName: { maxLength: false } }); setGoodsAddVisible(false); setGoodsAddDraft(""); setGoodsAddError(""); setGoodsRenameVisible(false); setGoodsRenameDraft(""); setGoodsRenameError(""); setGoodsSelectError(""); setEditForm({ contractName: cn.slice(0, MAX_PROJECT_CONTRACT_NAME_LENGTH), date: x.date, duration: String(x.duration ?? "").slice(0, MAX_PROJECT_DURATION_LENGTH), goods: x.goods, amount: projectMoneyFromNumber(x.amount), outstanding: projectMoneyFromNumber(x.outstanding) }); setEditModal(true); }} onDelete={() => void deleteProjectRow(x.id, x.contractName)} /></td></tr>)}</tbody></table></div>{pager(safeProjectPage, projectPages, projectRows.length, setProjectPage)}</section></div></section>)}
-        {view === "payments" && <section className="page tool-page"><div className="tool-layout">{(paymentLoadError || (paymentSaveError && !paymentEditModal)) && <div role="alert" style={{background:"#fee2e2",color:"#991b1b",padding:"14px 18px",borderRadius:"14px",fontSize:".93rem"}}>{paymentLoadError || paymentSaveError}</div>}<section className="panel metric-panel"><div className="metric-section"><div className="inline-stat-grid"><MetricChip label="Total DV" value={number.format(payments.length)} /><MetricChip label="Total amount" value={peso.format(stats.totalVoucherValue)} /><MetricChip label="Status alerts" value={number.format(stats.pendingPayments)} /></div></div></section><section className="panel form-panel"><div className="panel__header"><div><p className="panel__kicker">DV Payment Monitoring Tool</p><h3>Add new DV record</h3></div></div><form className="record-form" onSubmit={savePayment}><label><span>Title of the Project *</span><input type="text" autoComplete="off" value={paymentForm.title} onChange={(e) => { const raw = e.target.value; const capped = raw.slice(0, MAX_DV_TITLE_LENGTH); setPaymentForm({ ...paymentForm, title: capped }); setDvTitleWarning(raw.length > MAX_DV_TITLE_LENGTH); }} onBlur={() => setDvTitleWarning(false)} placeholder="Enter project title" aria-invalid={dvTitleWarning} /><div className="form-field-warning-slot">{dvTitleWarning ? <p className="form-field-warning" role="alert">{`At most ${MAX_DV_TITLE_LENGTH} characters are allowed.`}</p> : null}</div></label><label><span>Name and Address of Claimant</span><textarea value={paymentForm.claimantAddress} onChange={(e) => { const raw = e.target.value; const capped = raw.slice(0, MAX_DV_CLAIMANT_LENGTH); setPaymentForm({ ...paymentForm, claimantAddress: capped }); setDvClaimantWarning(raw.length > MAX_DV_CLAIMANT_LENGTH); }} onBlur={() => setDvClaimantWarning(false)} placeholder="Enter claimant name and address" aria-invalid={dvClaimantWarning} /><div className="form-field-warning-slot">{dvClaimantWarning ? <p className="form-field-warning" role="alert">{`At most ${MAX_DV_CLAIMANT_LENGTH} characters are allowed.`}</p> : null}</div></label><div className="form-row"><label><span>Voucher No.</span><input type="text" inputMode="numeric" autoComplete="off" value={paymentForm.voucherNo} onChange={(e) => { const raw = e.target.value; const digitsOnly = raw.replace(/\D/g, ""); const capped = digitsOnly.slice(0, MAX_DV_VOUCHER_LENGTH); setPaymentForm({ ...paymentForm, voucherNo: capped }); setDvVoucherWarning({ nonNumeric: /\D/.test(raw), maxLength: digitsOnly.length > MAX_DV_VOUCHER_LENGTH }); }} onBlur={() => setDvVoucherWarning({ nonNumeric: false, maxLength: false })} placeholder="Enter voucher number" aria-invalid={dvVoucherWarning.nonNumeric || dvVoucherWarning.maxLength} /><div className="form-field-warning-slot">{(dvVoucherWarning.nonNumeric || dvVoucherWarning.maxLength) ? <p className="form-field-warning" role="alert">{dvVoucherWarning.nonNumeric ? "Numbers only. " : null}{dvVoucherWarning.maxLength ? `At most ${MAX_DV_VOUCHER_LENGTH} digits are allowed.` : null}</p> : null}</div></label><label><span>Amount</span><input type="text" inputMode="decimal" autoComplete="off" value={paymentForm.amount} onChange={(e) => { const st = projectMoneyParseState(e.target.value); setPaymentForm({ ...paymentForm, amount: st.display }); setDvAmountWarning({ invalidChars: st.hadInvalidChars, maxDigits: st.digitLimitExceeded }); }} onBlur={() => setDvAmountWarning({ invalidChars: false, maxDigits: false })} placeholder="0.00" aria-invalid={dvAmountWarning.invalidChars || dvAmountWarning.maxDigits} /><div className="form-field-warning-slot">{(dvAmountWarning.invalidChars || dvAmountWarning.maxDigits) ? <p className="form-field-warning" role="alert">{dvAmountWarning.invalidChars ? "Only numbers, commas, and periods are allowed. " : null}{dvAmountWarning.maxDigits ? `At most ${MAX_PROJECT_MONEY_INT_DIGITS} integer digits and ${MAX_PROJECT_MONEY_FRAC_DIGITS} decimal places are allowed.` : null}</p> : null}</div></label><label><span>Record date</span><input type="date" title="Choose a date using the calendar" value={paymentForm.date} onKeyDown={blockDateFieldDirectEntry} onPaste={(e) => e.preventDefault()} onCut={(e) => e.preventDefault()} onChange={(e) => setPaymentForm({ ...paymentForm, date: e.target.value })} /><div className="form-field-warning-slot" /></label></div><div className="form-row form-row--triple"><label><span>ICTSSD (Department)</span><select value={paymentForm.ictssd} onChange={(e) => setPaymentForm({ ...paymentForm, ictssd: e.target.value })}>{ICTSSD.map((o) => <option key={o}>{o}</option>)}</select><div className="form-field-warning-slot" /></label><label><span>GAD (Department)</span><select value={paymentForm.gad} onChange={(e) => setPaymentForm({ ...paymentForm, gad: e.target.value })}>{GAD.map((o) => <option key={o}>{o}</option>)}</select><div className="form-field-warning-slot" /></label><label><span>CASH (Department)</span><select value={paymentForm.cash} onChange={(e) => setPaymentForm({ ...paymentForm, cash: e.target.value })}>{CASH.map((o) => <option key={o}>{o}</option>)}</select><div className="form-field-warning-slot" /></label></div><div className="form-actions"><button type="submit" className="primary-button">Add DV record</button><button type="button" className="ghost-button" onClick={() => { setPaymentForm(blankPayment); setPaymentSaveError(""); setDvTitleWarning(false); setDvClaimantWarning(false); setDvVoucherWarning({ nonNumeric: false, maxLength: false }); setDvAmountWarning({ invalidChars: false, maxDigits: false }); }}>Clear form</button></div>{paymentSaveError && !paymentEditModal ? <p className="form-save-error" role="alert">{paymentSaveError}</p> : null}</form></section><section className="panel table-panel">{toolbar("DV payment records", "Track voucher workflow progress with clear department status indicators.", paymentSearch, setPaymentSearch, paymentFilter, setPaymentFilter, PAYMENT_FILTERS, "Status", paymentExport)}<div className="table-wrap table-wrap--payments"><table><thead><tr><th>Title of the Project</th><th>Name and Address of Claimant</th><th>Voucher No.</th><th>Date</th><th>Amount</th><th>ICTSSD</th><th>GAD</th><th>CASH</th><th>Actions</th></tr></thead><tbody>{paymentsLoading ? <tr><td colSpan={9}>Loading DV payments…</td></tr> : pageSlice(paymentRows, safePaymentPage).map((x) => <tr key={x.id}><td>{x.title}</td><td>{x.claimantAddress}</td><td>{x.voucherNo}</td><td>{fmtDate(x.date)}</td><td>{peso.format(x.amount)}</td><td><StatusBadge label={x.ictssd} /></td><td><StatusBadge label={x.gad} /></td><td><StatusBadge label={x.cash} /></td><td><ActionSet onView={() => open("DV Payment", x.voucherNo, [["Title of the Project", x.title], ["Name and Address of Claimant", x.claimantAddress], ["Voucher No.", x.voucherNo], ["Date", fmtDate(x.date)], ["Amount", peso.format(x.amount)], ["ICTSSD", x.ictssd], ["GAD", x.gad], ["CASH", x.cash]])} onEdit={() => { setPaymentEdit(x.id); setPaymentEditForm({ title: x.title, claimantAddress: x.claimantAddress, voucherNo: x.voucherNo, amount: projectMoneyFromNumber(x.amount), date: x.date || "", ictssd: x.ictssd, gad: x.gad, cash: x.cash }); setPaymentSaveError(""); setDvTitleWarning(false); setDvClaimantWarning(false); setDvVoucherWarning({ nonNumeric: false, maxLength: false }); setDvAmountWarning({ invalidChars: false, maxDigits: false }); setPaymentEditModal(true); }} onDelete={async () => { await new Promise((resolve) => setConfirmModal({ title: x.voucherNo, onConfirm: resolve })); setConfirmModal(null); try { const res = await fetch(`/api/dv-payments/${x.id}`, { method: "DELETE" }); if (!res.ok && res.status !== 204) { const t = await res.text(); setPaymentSaveError(t || "Delete failed"); return; } setPayments((cur) => cur.filter((item) => item.id !== x.id)); } catch (err) { setPaymentSaveError(err instanceof Error ? err.message : String(err)); } }} /></td></tr>)}</tbody></table></div>{pager(safePaymentPage, paymentPages, paymentRows.length, setPaymentPage)}</section></div></section>}
+            <section className="panel metric-panel"><div className="metric-section"><div className="inline-stat-grid"><MetricChip label="Total of contracts" value={number.format(projects.length)} /><MetricChip label="Total of contract value" value={peso.format(stats.totalContractValue)} /><MetricChip label="Total of outstanding" value={peso.format(stats.totalOutstandingValue)} /></div></div></section><section className="panel form-panel"><div className="panel__header"><div><p className="panel__kicker">Project Monitoring Tool</p><h3>Add new project</h3></div></div>{projectAddRecordForm}</section><section className="panel table-panel">{toolbar("Project records", "Search, filter, and export contract monitoring data.", projectSearch, setProjectSearch, projectFilter, setProjectFilter, goodsFilterOptions, "Goods", projectExport)}<div className="table-wrap table-wrap--projects"><table><thead><tr><th>Name of Contract</th><th>Start Date</th><th>End Date</th><th>Duration</th><th>Kind of Goods</th><th>Amount of Contract</th><th>Outstanding Value</th><th>Actions</th></tr></thead><tbody>{projectsLoading ? <tr><td colSpan={8}>Loading projects…</td></tr> : pageSlice(projectRows, safeProjectPage).map((x) => <tr key={x.id}><td>{x.contractName}</td><td>{fmtDate(x.date)}</td><td>{formatProjectEndDateLabel(x.date, x.duration)}</td><td>{x.duration}</td><td>{x.goods}</td><td>{peso.format(x.amount)}</td><td>{peso.format(x.outstanding)}</td><td><ActionSet onView={() => open("Project", x.contractName, [["Start Date", fmtDate(x.date)], ["End Date", formatProjectEndDateLabel(x.date, x.duration)], ["Duration", x.duration], ["Kind of Goods", x.goods], ["Amount of Contract", peso.format(x.amount)], ["Outstanding Value", peso.format(x.outstanding)]])} onEdit={() => { setProjectEdit(x.id); const cn = String(x.contractName ?? ""); setEditMoneyWarnings({ ...blankProjectMoneyWarnings, contractName: { maxLength: false } }); setGoodsAddVisible(false); setGoodsAddDraft(""); setGoodsAddError(""); setGoodsRenameVisible(false); setGoodsRenameDraft(""); setGoodsRenameError(""); setGoodsSelectError(""); setEditForm({ contractName: cn.slice(0, MAX_PROJECT_CONTRACT_NAME_LENGTH), date: x.date, duration: String(x.duration ?? "").slice(0, MAX_PROJECT_DURATION_LENGTH), goods: x.goods, amount: projectMoneyFromNumber(x.amount), outstanding: projectMoneyFromNumber(x.outstanding) }); setEditModal(true); }} onDelete={() => void deleteProjectRow(x.id, x.contractName)} /></td></tr>)}</tbody></table></div>{pager(safeProjectPage, projectPages, projectRows.length, setProjectPage)}</section></div></section>)}
+        {view === "payments" && <section className="page tool-page"><div className="tool-layout">{(paymentLoadError || (paymentSaveError && !paymentEditModal)) && <div role="alert" style={{background:"#fee2e2",color:"#991b1b",padding:"14px 18px",borderRadius:"14px",fontSize:".93rem"}}>{paymentLoadError || paymentSaveError}</div>}<section className="panel metric-panel"><div className="metric-section"><div className="inline-stat-grid"><MetricChip label="Total DV" value={number.format(payments.length)} /><MetricChip label="Total amount" value={peso.format(stats.totalVoucherValue)} /><MetricChip label="Status alerts" value={number.format(stats.pendingPayments)} /></div></div></section><section className="panel form-panel"><div className="panel__header"><div><p className="panel__kicker">DV Payment Monitoring Tool</p><h3>Add new DV record</h3></div></div>{paymentAddRecordForm}</section><section className="panel table-panel">{toolbar("DV payment records", "Track voucher workflow progress with clear department status indicators.", paymentSearch, setPaymentSearch, paymentFilter, setPaymentFilter, PAYMENT_FILTERS, "Status", paymentExport)}<div className="table-wrap table-wrap--payments"><table><thead><tr><th>Title of the Project</th><th>Name and Address of Claimant</th><th>Voucher No.</th><th>Date</th><th>Amount</th><th>ICTSSD</th><th>GAD</th><th>CASH</th><th>Actions</th></tr></thead><tbody>{paymentsLoading ? <tr><td colSpan={9}>Loading DV payments…</td></tr> : pageSlice(paymentRows, safePaymentPage).map((x) => <tr key={x.id}><td>{x.title}</td><td>{x.claimantAddress}</td><td>{x.voucherNo}</td><td>{fmtDate(x.date)}</td><td>{peso.format(x.amount)}</td><td><StatusBadge label={x.ictssd} /></td><td><StatusBadge label={x.gad} /></td><td><StatusBadge label={x.cash} /></td><td><ActionSet onView={() => open("DV Payment", x.voucherNo, [["Title of the Project", x.title], ["Name and Address of Claimant", x.claimantAddress], ["Voucher No.", x.voucherNo], ["Date", fmtDate(x.date)], ["Amount", peso.format(x.amount)], ["ICTSSD", x.ictssd], ["GAD", x.gad], ["CASH", x.cash]])} onEdit={() => { setPaymentEdit(x.id); setPaymentEditForm({ title: x.title, claimantAddress: x.claimantAddress, voucherNo: x.voucherNo, amount: projectMoneyFromNumber(x.amount), date: x.date || "", ictssd: x.ictssd, gad: x.gad, cash: x.cash }); setPaymentSaveError(""); setDvTitleWarning(false); setDvClaimantWarning(false); setDvVoucherWarning({ nonNumeric: false, maxLength: false }); setDvAmountWarning({ invalidChars: false, maxDigits: false }); setPaymentEditModal(true); }} onDelete={async () => { await new Promise((resolve) => setConfirmModal({ title: x.voucherNo, onConfirm: resolve })); setConfirmModal(null); try { const res = await fetch(`/api/dv-payments/${x.id}`, { method: "DELETE" }); if (!res.ok && res.status !== 204) { const t = await res.text(); setPaymentSaveError(t || "Delete failed"); return; } setPayments((cur) => cur.filter((item) => item.id !== x.id)); } catch (err) { setPaymentSaveError(err instanceof Error ? err.message : String(err)); } }} /></td></tr>)}</tbody></table></div>{pager(safePaymentPage, paymentPages, paymentRows.length, setPaymentPage)}</section></div></section>}
 
-        {view === "outgoing" && <section className="page tool-page"><div className="tool-layout">{(outgoingLoadError || outgoingSaveError) && <div role="alert" style={{background:"#fee2e2",color:"#991b1b",padding:"14px 18px",borderRadius:"14px",fontSize:".93rem"}}>{outgoingLoadError || outgoingSaveError}</div>}<section className="panel metric-panel"><div className="metric-section"><div className="inline-stat-grid"><MetricChip label="Total outgoing" value={number.format(outgoing.length)} /><MetricChip label="Top route" value={outgoingBars[0]?.label || "None"} /><MetricChip label="Departments hit" value={number.format(outgoingBars.length)} /></div></div></section><section className="panel form-panel"><div className="panel__header"><div><p className="panel__kicker">ISSD Outgoing Monitoring Tool</p><h3>{outgoingEdit ? "Edit outgoing route" : "Add outgoing record"}</h3></div></div><form className="record-form" onSubmit={saveOutgoing}><label><span>Subject</span><textarea value={outgoingForm.subject} onChange={(e) => { const raw = e.target.value; const capped = raw.slice(0, MAX_OUTGOING_SUBJECT_LENGTH); setOutgoingForm({ ...outgoingForm, subject: capped }); setOutgoingSubjectWarning(raw.length > MAX_OUTGOING_SUBJECT_LENGTH); }} onBlur={() => setOutgoingSubjectWarning(false)} placeholder="Enter the memo subject" aria-invalid={outgoingSubjectWarning} /><div className="form-field-warning-slot">{outgoingSubjectWarning ? <p className="form-field-warning" role="alert">{`At most ${MAX_OUTGOING_SUBJECT_LENGTH} characters are allowed.`}</p> : null}</div></label><div className="form-row"><label><span>Memo Number</span><input type="text" autoComplete="off" value={outgoingForm.memoNo} onChange={(e) => { const raw = e.target.value; const allowedOnly = raw.replace(OUTGOING_MEMO_NO_ALLOWED, ""); const capped = allowedOnly.slice(0, MAX_OUTGOING_MEMO_NO_LENGTH); setOutgoingForm({ ...outgoingForm, memoNo: capped }); setOutgoingMemoNoWarning({ invalidChars: OUTGOING_MEMO_NO_DISALLOWED.test(raw), maxLength: allowedOnly.length > MAX_OUTGOING_MEMO_NO_LENGTH }); }} onBlur={() => setOutgoingMemoNoWarning({ invalidChars: false, maxLength: false })} placeholder="ISSD-YYYY-000" aria-invalid={outgoingMemoNoWarning.invalidChars || outgoingMemoNoWarning.maxLength} /><div className="form-field-warning-slot">{(outgoingMemoNoWarning.invalidChars || outgoingMemoNoWarning.maxLength) ? <p className="form-field-warning" role="alert">{outgoingMemoNoWarning.invalidChars ? "Only letters, numbers, and hyphens are allowed. " : null}{outgoingMemoNoWarning.maxLength ? `At most ${MAX_OUTGOING_MEMO_NO_LENGTH} characters are allowed.` : null}</p> : null}</div></label><label><span>Date</span><input type="date" title="Choose a date using the calendar" value={outgoingForm.date} onKeyDown={blockDateFieldDirectEntry} onPaste={(e) => e.preventDefault()} onCut={(e) => e.preventDefault()} onChange={(e) => setOutgoingForm({ ...outgoingForm, date: e.target.value })} /></label></div>{outgoingDeptPickers}<div className="form-actions"><button type="submit" className="primary-button" disabled={outgoingSaving}>{outgoingSaving ? (outgoingEdit ? "Saving…" : "Adding…") : (outgoingEdit ? "Save outgoing record" : "Add outgoing")}</button><button type="button" className="ghost-button" onClick={() => { setOutgoingEdit(null); setOutgoingForm(blankOutgoing); setOutgoingSaveError(""); setOutgoingSubjectWarning(false); setOutgoingMemoNoWarning({ invalidChars: false, maxLength: false }); setThruAddVisible(false); setThruAddDraft(""); setThruAddError(""); setForAddVisible(false); setForAddDraft(""); setForAddError(""); }}>Clear form</button></div></form></section><section className="panel table-panel">{toolbar("Outgoing records", "Monitor subject routing and department distribution.", outgoingSearch, setOutgoingSearch, outgoingFilter, setOutgoingFilter, forDeptFilterOptions, "For", outgoingExport)}<div className="table-wrap table-wrap--outgoing"><table><thead><tr><th>Subject</th><th>Memo Number</th><th>Date</th><th>Thru</th><th>For</th><th>Actions</th></tr></thead><tbody>{outgoingLoading ? <tr><td colSpan={6}>Loading outgoing records…</td></tr> : pageSlice(outgoingRows, safeOutgoingPage).map((x) => <tr key={x.id}><td>{x.subject}</td><td>{x.memoNo}</td><td>{fmtDate(x.date)}</td><td>{x.thru}</td><td>{x.forDept}</td><td><ActionSet onView={() => open("Outgoing", x.memoNo, [["Subject", x.subject], ["Date", fmtDate(x.date)], ["Thru", x.thru], ["For", x.forDept]])} onEdit={() => { setOutgoingEdit(x.id); setOutgoingForm({ subject: x.subject, memoNo: x.memoNo, date: x.date, thru: x.thru, forDept: x.forDept }); setOutgoingSaveError(""); setOutgoingSubjectWarning(false); setOutgoingMemoNoWarning({ invalidChars: false, maxLength: false }); }} onDelete={() => void deleteOutgoingRow(x.id, x.memoNo)} /></td></tr>)}</tbody></table></div>{pager(safeOutgoingPage, outgoingPages, outgoingRows.length, setOutgoingPage)}</section></div></section>}
+        {view === "policies" && (
+          <PolicyMonitoringView
+            setModal={setModal}
+            setConfirmModal={setConfirmModal}
+            showRequiredFieldsAlert={showRequiredFieldsAlert}
+          />
+        )}
+
+        {view === "outgoing" && <section className="page tool-page"><div className="tool-layout">{outgoingLoadError && <div role="alert" style={{background:"#fee2e2",color:"#991b1b",padding:"14px 18px",borderRadius:"14px",fontSize:".93rem"}}>{outgoingLoadError}</div>}<section className="panel metric-panel"><div className="metric-section"><div className="inline-stat-grid"><MetricChip label="Total outgoing" value={number.format(outgoing.length)} /><MetricChip label="Top route" value={outgoingBars[0]?.label || "None"} /><MetricChip label="Departments hit" value={number.format(outgoingBars.length)} /></div></div></section><section className="panel form-panel"><div className="panel__header"><div><p className="panel__kicker">ISSD Outgoing Monitoring Tool</p><h3>Add outgoing record</h3></div></div>{outgoingAddRecordForm}</section><section className="panel table-panel">{toolbar("Outgoing records", "Monitor subject routing and department distribution.", outgoingSearch, setOutgoingSearch, outgoingFilter, setOutgoingFilter, forDeptFilterOptions, "For", outgoingExport)}<div className="table-wrap table-wrap--outgoing"><table><thead><tr><th>Subject</th><th>Memo Number</th><th>Date</th><th>Thru</th><th>For</th><th>Actions</th></tr></thead><tbody>{outgoingLoading ? <tr><td colSpan={6}>Loading outgoing records…</td></tr> : pageSlice(outgoingRows, safeOutgoingPage).map((x) => <tr key={x.id}><td title={x.subject}>{x.subject}</td><td>{x.memoNo}</td><td>{fmtDate(x.date)}</td><td>{x.thru}</td><td>{x.forDept}</td><td><ActionSet onView={() => open("Outgoing", x.memoNo, [["Subject", x.subject], ["Date", fmtDate(x.date)], ["Thru", x.thru], ["For", x.forDept]])} onEdit={() => { setOutgoingEdit(x.id); setOutgoingEditForm({ subject: x.subject, memoNo: x.memoNo, date: x.date || "", thru: x.thru, forDept: x.forDept }); setOutgoingSaveError(""); setOutgoingSubjectWarning(false); setOutgoingMemoNoWarning({ invalidChars: false, maxLength: false }); setThruAddVisible(false); setThruAddDraft(""); setThruAddError(""); setForAddVisible(false); setForAddDraft(""); setForAddError(""); setOutgoingEditModal(true); }} onDelete={() => void deleteOutgoingRow(x.id, x.memoNo)} /></td></tr>)}</tbody></table></div>{pager(safeOutgoingPage, outgoingPages, outgoingRows.length, setOutgoingPage)}</section></div></section>}
 
         {view === "reports" && (
           <section className="page reports-page">
@@ -1777,6 +2714,36 @@ function App() {
           </div>
         </div>
       )}
+
+      {outgoingEditModal && (
+        <div className="modal-backdrop" onClick={closeOutgoingEditModal}>
+          <div className="modal-card workspace-modal workspace-modal--edit" onClick={(e) => e.stopPropagation()}>
+            <div className="workspace-modal__header">
+              <div>
+                <p className="workspace-modal__eyebrow">ISSD Outgoing Monitoring Tool</p>
+                <h3>Edit outgoing record</h3>
+              </div>
+              <button type="button" className="workspace-modal__close" aria-label="Cancel edit" onClick={closeOutgoingEditModal}><CloseIcon /></button>
+            </div>
+            <form className="record-form" onSubmit={saveOutgoingEdit}>
+              <label><span>Subject</span><textarea value={outgoingEditForm.subject} onChange={(e) => { const raw = e.target.value; const capped = raw.slice(0, MAX_OUTGOING_SUBJECT_LENGTH); setOutgoingEditForm({ ...outgoingEditForm, subject: capped }); setOutgoingSubjectWarning(raw.length > MAX_OUTGOING_SUBJECT_LENGTH); }} onBlur={() => setOutgoingSubjectWarning(false)} placeholder="Enter the memo subject" aria-invalid={outgoingSubjectWarning} /><div className="form-field-warning-slot">{outgoingSubjectWarning ? <p className="form-field-warning" role="alert">{`At most ${MAX_OUTGOING_SUBJECT_LENGTH} characters are allowed.`}</p> : null}</div></label>
+              <div className="form-row">
+                <label><span>Memo Number</span><input type="text" autoComplete="off" value={outgoingEditForm.memoNo} onChange={(e) => { const raw = e.target.value; const allowedOnly = raw.replace(OUTGOING_MEMO_NO_ALLOWED, ""); const capped = allowedOnly.slice(0, MAX_OUTGOING_MEMO_NO_LENGTH); setOutgoingEditForm({ ...outgoingEditForm, memoNo: capped }); setOutgoingMemoNoWarning({ invalidChars: OUTGOING_MEMO_NO_DISALLOWED.test(raw), maxLength: allowedOnly.length > MAX_OUTGOING_MEMO_NO_LENGTH }); }} onBlur={() => setOutgoingMemoNoWarning({ invalidChars: false, maxLength: false })} placeholder="ISSD-YYYY-000" aria-invalid={outgoingMemoNoWarning.invalidChars || outgoingMemoNoWarning.maxLength} /><div className="form-field-warning-slot">{(outgoingMemoNoWarning.invalidChars || outgoingMemoNoWarning.maxLength) ? <p className="form-field-warning" role="alert">{outgoingMemoNoWarning.invalidChars ? "Only letters, numbers, and hyphens are allowed. " : null}{outgoingMemoNoWarning.maxLength ? `At most ${MAX_OUTGOING_MEMO_NO_LENGTH} characters are allowed.` : null}</p> : null}</div></label>
+                <label><span>Date</span><input type="date" title="Choose a date using the calendar" value={outgoingEditForm.date} onKeyDown={blockDateFieldDirectEntry} onPaste={(e) => e.preventDefault()} onCut={(e) => e.preventDefault()} onChange={(e) => setOutgoingEditForm({ ...outgoingEditForm, date: e.target.value })} /></label>
+              </div>
+              {outgoingEditDeptPickers}
+              <div className="form-actions">
+                <button type="submit" className="primary-button" disabled={outgoingSaving}>{outgoingSaving ? "Saving…" : "Save changes"}</button>
+                <button type="button" className="ghost-button" onClick={closeOutgoingEditModal}>Cancel</button>
+              </div>
+              {outgoingSaveError ? <p className="form-save-error" role="alert">{outgoingSaveError}</p> : null}
+            </form>
+          </div>
+        </div>
+      )}
+      {requiredFieldsAlert ? (
+        <RequiredFieldsAlertModal message={requiredFieldsAlert} onClose={() => setRequiredFieldsAlert(null)} />
+      ) : null}
       {confirmModal && (
         <div className="modal-backdrop" onClick={() => setConfirmModal(null)}>
           <div className="modal-card workspace-modal workspace-modal--confirm" onClick={(e) => e.stopPropagation()}>
@@ -1797,7 +2764,7 @@ function App() {
           </div>
         </div>
       )}
-      {modal && <div className="modal-backdrop" onClick={() => setModal(null)}><div className={`modal-card workspace-modal ${modal.type === "Project" ? "workspace-modal--project" : ""}`} onClick={(e) => e.stopPropagation()}><div className="workspace-modal__header"><div><p className="workspace-modal__eyebrow">{modal.type.toUpperCase()} DETAILS</p><h3>{modal.title}</h3></div><button type="button" className="workspace-modal__close" aria-label="Close details" onClick={() => setModal(null)}><CloseIcon /></button></div><div className="workspace-modal__body">{modal.type === "Project" ? <div className="project-detail-grid">{buildProjectDetailFields(modal).map((field) => <article key={field.label} className="project-detail-field"><span className="project-detail-label">{field.label}</span><strong className={`project-detail-value ${field.tone === "amount" ? "project-detail-value--amount" : ""} ${field.tone === "danger" ? "project-detail-value--danger" : ""}`}>{field.value}</strong></article>)}</div> : buildDetailSections(modal).map((section) => <section key={section.title} className="detail-section"><div className="detail-section__header"><p className="detail-section__title">{section.title}</p></div><div className={`detail-grid detail-grid--${section.columns}`}>{section.fields.map((field) => <article key={field.label} className={`detail-item detail-item--${field.tone}`}><div className="detail-item__header"><span className="detail-item__icon"><DetailFieldIcon name={field.icon} /></span><span className="detail-item__label">{field.label}</span></div><strong className="detail-item__value">{field.value}</strong></article>)}</div></section>)}</div></div></div>}
+      {modal && <div className="modal-backdrop" onClick={() => setModal(null)}><div className={`modal-card workspace-modal ${modal.type === "Project" ? "workspace-modal--project" : ""}${modal.type === "Outgoing" ? " workspace-modal--outgoing" : ""}${modal.type === "DV Payment" ? " workspace-modal--dv-payment" : ""}${modal.type === "Policy" ? " workspace-modal--policy" : ""}`} onClick={(e) => e.stopPropagation()}><div className="workspace-modal__header"><div><p className="workspace-modal__eyebrow">{modal.type.toUpperCase()} DETAILS</p><h3>{modal.title}</h3></div><button type="button" className="workspace-modal__close" aria-label="Close details" onClick={() => setModal(null)}><CloseIcon /></button></div><div className="workspace-modal__body">{modal.type === "Project" ? <div className="project-detail-grid">{buildProjectDetailFields(modal).map((field) => <article key={field.label} className="project-detail-field"><span className="project-detail-label">{field.label}</span><strong className={`project-detail-value ${field.tone === "amount" ? "project-detail-value--amount" : ""} ${field.tone === "danger" ? "project-detail-value--danger" : ""}`}>{field.value}</strong></article>)}</div> : buildDetailSections(modal).map((section) => <section key={section.key || section.title || section.fields[0]?.label} className={`detail-section${section.compact ? " detail-section--compact" : ""}`}>{section.title && !section.hideTitle ? <div className="detail-section__header"><p className="detail-section__title">{section.title}</p></div> : null}<div className={`detail-grid detail-grid--${section.columns}${section.columns === 1 ? " detail-grid--field-wide" : ""}`}>{section.fields.map((field) => <article key={field.label} className={`detail-item detail-item--${field.tone}`}><div className="detail-item__header"><span className="detail-item__icon"><DetailFieldIcon name={field.icon} /></span><span className="detail-item__label">{field.label}</span></div><strong className="detail-item__value">{field.value}</strong></article>)}</div></section>)}</div></div></div>}
     </div>
   );
 }
@@ -1870,7 +2837,10 @@ function HorizontalBarChart({ data, formatter, tone = "brand" }) {
             <strong>{formatter(item.value)}</strong>
           </div>
           <div className="analytics-bar-row__track">
-            <div className="analytics-bar-row__fill" style={{ width: `${(item.value / max) * 100}%`, animationDelay: `${index * 80}ms` }} />
+            <div
+              className="analytics-bar-row__fill"
+              style={{ width: `${analyticsBarWidthPercent(item.value, max)}%`, animationDelay: `${index * 80}ms` }}
+            />
           </div>
         </article>
       ))}
@@ -1890,7 +2860,7 @@ function LineTrendChart({ data, formatter }) {
 
   const points = data.map((item, index) => {
     const x = paddingX + stepX * index;
-    const y = height - paddingY - ((item.value / max) * (height - paddingY * 2));
+    const y = height - paddingY - analyticsLogRatio(item.value, max) * (height - paddingY * 2);
     return { ...item, x, y };
   });
 
@@ -1915,7 +2885,7 @@ function LineTrendChart({ data, formatter }) {
         {data.map((item) => (
           <article key={item.label} className="analytics-line-chart__label">
             <span title={item.fullLabel || item.label}>{item.label}</span>
-            <strong>{formatter(item.value)}</strong>
+            <strong title={formatter(item.value)}>{formatAnalyticsMoney(item.value)}</strong>
           </article>
         ))}
       </div>
@@ -2041,6 +3011,7 @@ function AnalyticsIcon({ name }) {
   if (name === "value") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.75h5.25a3.75 3.75 0 1 1 0 7.5H8m0-7.5v12.5m-2-9.25h8m-8 3.5h8" /></svg>;
   if (name === "dv") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.75 4.75h6l3.5 3.5v11a1 1 0 0 1-1 1h-8.5a1 1 0 0 1-1-1v-13.5a1 1 0 0 1 1-1Z" /><path d="M13.75 4.75v3.5h3.5M9 12h6M9 15h4" /></svg>;
   if (name === "outgoing") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 6.5h5v5h-5zM13.5 12.5h5v5h-5z" /><path d="M10.5 9h2a3 3 0 0 1 3 3v.5" /></svg>;
+  if (name === "policy") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.75 4.75h7l3.25 3.25v11.5a1 1 0 0 1-1 1H7.75a1 1 0 0 1-1-1V5.75a1 1 0 0 1 1-1Z" /><path d="M13.75 4.75v3.25h3.25M9.25 12h5.5M9.25 15h4" /></svg>;
   return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /></svg>;
 }
 
@@ -2048,6 +3019,7 @@ function SidebarNavIcon({ name }) {
   if (name === "projects") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.75 6.75h14.5v10.5H4.75z" /><path d="M8 9.75h8M8 13h5" /></svg>;
   if (name === "dv") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.75 4.75h6l3.5 3.5v11a1 1 0 0 1-1 1h-8.5a1 1 0 0 1-1-1v-13.5a1 1 0 0 1 1-1Z" /><path d="M13.75 4.75v3.5h3.5M9 12h6M9 15h4" /></svg>;
   if (name === "outgoing") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 6.5h5v5h-5zM13.5 12.5h5v5h-5z" /><path d="M10.5 9h2a3 3 0 0 1 3 3v.5" /></svg>;
+  if (name === "policy") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.75 4.75h7l3.25 3.25v11.5a1 1 0 0 1-1 1H7.75a1 1 0 0 1-1-1V5.75a1 1 0 0 1 1-1Z" /><path d="M13.75 4.75v3.25h3.25M9.25 12h5.5M9.25 15h4" /></svg>;
   if (name === "reports") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.75 18.25V10.5M11.75 18.25V5.75M17.75 18.25v-4.5M4 18.25h16" /></svg>;
   return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /></svg>;
 }
@@ -2080,19 +3052,40 @@ function buildDetailSections(modal) {
   if (modal.type === "DV Payment") {
     return [
       {
+        key: "dv-voucher-title",
         title: "Voucher Information",
-        columns: 3,
+        columns: 1,
+        fields: [detailField("Title of the Project", byLabel["Title of the Project"])],
+      },
+      {
+        key: "dv-voucher-claimant",
+        hideTitle: true,
+        compact: true,
+        columns: 1,
+        fields: [detailField("Name and Address of Claimant", byLabel["Name and Address of Claimant"])],
+      },
+      {
+        key: "dv-voucher-meta",
+        hideTitle: true,
+        compact: true,
+        columns: 2,
         fields: [
-          detailField("Title of the Project", byLabel["Title of the Project"]),
-          detailField("Name and Address of Claimant", byLabel["Name and Address of Claimant"]),
-          detailField("Voucher No.", byLabel["Voucher No."]),
+          detailField("Voucher No.", byLabel["Voucher No."] ?? modal.title),
+          detailField("Date", byLabel["Date"]),
         ],
       },
       {
+        key: "dv-processing-amount",
         title: "Processing Status",
-        columns: 2,
+        columns: 1,
+        fields: [detailField("Amount", byLabel["Amount"])],
+      },
+      {
+        key: "dv-processing-status",
+        hideTitle: true,
+        compact: true,
+        columns: 3,
         fields: [
-          detailField("Amount", byLabel["Amount"]),
           detailField("ICTSSD", byLabel["ICTSSD"]),
           detailField("GAD", byLabel["GAD"]),
           detailField("CASH", byLabel["CASH"]),
@@ -2101,18 +3094,68 @@ function buildDetailSections(modal) {
     ];
   }
 
+  if (modal.type === "Policy") {
+    return [
+      {
+        key: "policy-header",
+        title: "Policy Information",
+        columns: 1,
+        fields: [detailField("Policy Title", byLabel["Policy Title"])],
+      },
+      {
+        key: "policy-people",
+        hideTitle: true,
+        compact: true,
+        columns: 2,
+        fields: [
+          detailField("Created By", byLabel["Created By"]),
+          detailField("Assigned To", byLabel["Assigned To"]),
+        ],
+      },
+      {
+        key: "policy-dates",
+        hideTitle: true,
+        compact: true,
+        columns: 3,
+        fields: [
+          detailField("Start Date", byLabel["Start Date"]),
+          detailField("End Date", byLabel["End Date"]),
+          detailField("Duration", byLabel["Duration"] || byLabel["Days"]),
+        ],
+      },
+      {
+        key: "policy-status",
+        hideTitle: true,
+        compact: true,
+        columns: 2,
+        fields: [
+          detailField("Status", byLabel["Status"]),
+          detailField("Remarks", byLabel["Remarks"] || "—"),
+        ],
+      },
+    ];
+  }
+
   if (modal.type === "Outgoing") {
     return [
       {
+        key: "outgoing-document",
         title: "Document Information",
-        columns: 3,
+        columns: 1,
+        fields: [detailField("Subject", byLabel["Subject"])],
+      },
+      {
+        key: "outgoing-document-meta",
+        hideTitle: true,
+        compact: true,
+        columns: 2,
         fields: [
-          detailField("Subject", byLabel["Subject"]),
           detailField("Date", byLabel["Date"]),
           detailField("Memo Number", byLabel["Memo Number"] ?? modal.title),
         ],
       },
       {
+        key: "outgoing-routing",
         title: "Routing Summary",
         columns: 2,
         fields: [
