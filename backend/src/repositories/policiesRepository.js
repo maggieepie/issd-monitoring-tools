@@ -41,7 +41,7 @@ const SELECT_COLS = `ID, TRANSACTION_CODE, POLICY_TITLE, CREATED_BY, ASSIGNED_TO
 
 async function selectPolicyRow(connection, id) {
   const result = await connection.execute(
-    `SELECT ${SELECT_COLS} FROM ${TABLE} WHERE ID = :id`,
+    `SELECT ${SELECT_COLS} FROM ${TABLE} WHERE ID = :id AND (IS_DELETED = 0 OR IS_DELETED IS NULL)`,
     { id },
     { outFormat: oracledb.OUT_FORMAT_OBJECT },
   );
@@ -53,7 +53,7 @@ async function listPolicies() {
   const connection = await pool.getConnection();
   try {
     const result = await connection.execute(
-      `SELECT ${SELECT_COLS} FROM ${TABLE} ORDER BY START_DATE DESC, ID DESC`,
+      `SELECT ${SELECT_COLS} FROM ${TABLE} WHERE IS_DELETED = 0 OR IS_DELETED IS NULL ORDER BY START_DATE DESC, ID DESC`,
       [],
       { outFormat: oracledb.OUT_FORMAT_OBJECT },
     );
@@ -143,7 +143,7 @@ async function deletePolicy(id) {
   const connection = await pool.getConnection();
   try {
     const result = await connection.execute(
-      `DELETE FROM ${TABLE} WHERE ID = :id`,
+      `UPDATE ${TABLE} SET IS_DELETED = 1, UPDATED_AT = SYSTIMESTAMP WHERE ID = :id`,
       { id },
       { autoCommit: true },
     );

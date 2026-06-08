@@ -7,8 +7,8 @@ const MAX_POLICY_TITLE = 175;
 const MAX_CREATED_BY = 30;
 const MAX_ASSIGNED_TO = 20;
 const MAX_REMARKS = 500;
-const TRANSACTION_CODE_ALLOWED = /[^A-Za-z0-9-]/g;
-const TRANSACTION_CODE_PATTERN = /^[A-Za-z0-9-]+$/;
+const TRANSACTION_CODE_ALLOWED = /[^A-Za-z0-9- ]/g;
+const TRANSACTION_CODE_PATTERN = /^[A-Za-z0-9- ]+$/;
 const CREATED_BY_ALLOWED = /[^A-Za-z- ]/g;
 const CREATED_BY_PATTERN = /^[A-Za-z- ]+$/;
 const ASSIGNED_TO_ALLOWED = /[^A-Za-z0-9- ]/g;
@@ -62,17 +62,17 @@ function parsePolicyBody(body) {
     throw err;
   }
   if (!TRANSACTION_CODE_PATTERN.test(transactionCode)) {
-    const err = new Error(`transactionCode may only contain letters, numbers, and dashes (max ${MAX_TRANSACTION_CODE} characters).`);
+    const err = new Error(`transactionCode may only contain letters, numbers, dashes, and spaces (max ${MAX_TRANSACTION_CODE} characters).`);
     err.status = 400;
     throw err;
   }
   if (!CREATED_BY_PATTERN.test(createdBy)) {
-    const err = new Error(`createdBy may only contain letters and dashes (max ${MAX_CREATED_BY} characters).`);
+    const err = new Error(`createdBy may only contain letters, dashes, and spaces (max ${MAX_CREATED_BY} characters).`);
     err.status = 400;
     throw err;
   }
   if (!ASSIGNED_TO_PATTERN.test(assignedTo)) {
-    const err = new Error(`assignedTo may only contain letters, numbers, and dashes (max ${MAX_ASSIGNED_TO} characters).`);
+    const err = new Error(`assignedTo may only contain letters, numbers, dashes, and spaces (max ${MAX_ASSIGNED_TO} characters).`);
     err.status = 400;
     throw err;
   }

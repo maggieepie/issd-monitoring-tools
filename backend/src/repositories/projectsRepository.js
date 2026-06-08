@@ -42,7 +42,7 @@ async function selectProjectRow(connection, id) {
     `SELECT ID, CONTRACT_NAME, CONTRACT_DATE, DURATION, GOODS, AMOUNT, OUTSTANDING,
             CREATED_AT, UPDATED_AT
        FROM ${TABLE}
-      WHERE ID = :id`,
+      WHERE ID = :id AND (IS_DELETED = 0 OR IS_DELETED IS NULL)`,
     { id },
     { outFormat: oracledb.OUT_FORMAT_OBJECT },
   );
@@ -57,6 +57,7 @@ async function listProjects() {
       `SELECT ID, CONTRACT_NAME, CONTRACT_DATE, DURATION, GOODS, AMOUNT, OUTSTANDING,
               CREATED_AT, UPDATED_AT
          FROM ${TABLE}
+        WHERE IS_DELETED = 0 OR IS_DELETED IS NULL
         ORDER BY CONTRACT_DATE DESC, ID DESC`,
       [],
       { outFormat: oracledb.OUT_FORMAT_OBJECT },
@@ -133,7 +134,7 @@ async function deleteProject(id) {
   const connection = await pool.getConnection();
   try {
     const result = await connection.execute(
-      `DELETE FROM ${TABLE} WHERE ID = :id`,
+      `UPDATE ${TABLE} SET IS_DELETED = 1, UPDATED_AT = SYSTIMESTAMP WHERE ID = :id`,
       { id },
       { autoCommit: true },
     );

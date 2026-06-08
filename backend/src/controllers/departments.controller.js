@@ -53,4 +53,32 @@ async function create(req, res, next) {
   }
 }
 
-export { create, list };
+async function update(req, res, next) {
+  try {
+    if (!env.oracle.enabled) return res.status(503).json(NOT_CONFIGURED);
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid department id." });
+    const name = String(req.body?.name ?? "").trim().slice(0, 100);
+    if (!name) return res.status(400).json({ message: "name is required." });
+    const row = await departmentsRepo.updateDepartment(id, { name });
+    res.json(row);
+  } catch (err) {
+    err.message = oracleHelpMessage(err.message);
+    next(err);
+  }
+}
+
+async function remove(req, res, next) {
+  try {
+    if (!env.oracle.enabled) return res.status(503).json(NOT_CONFIGURED);
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid department id." });
+    await departmentsRepo.deleteDepartment(id);
+    res.status(204).send();
+  } catch (err) {
+    err.message = oracleHelpMessage(err.message);
+    next(err);
+  }
+}
+
+export { create, list, remove, update };

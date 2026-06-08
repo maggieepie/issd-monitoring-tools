@@ -15,7 +15,7 @@ const NOT_CONFIGURED = {
 
 function parseOutgoingBody(body) {
   const subject = String(body?.subject ?? "").trim().slice(0, 500);
-  const memoNo = String(body?.memoNo ?? "").trim().replace(/[^A-Za-z0-9-]/g, "").slice(0, 20);
+  const memoNo = String(body?.memoNo ?? "").trim().replace(/[^A-Za-z0-9- ]/g, "").slice(0, 20);
   const date = String(body?.date ?? "").trim();
   const thru = String(body?.thru ?? "").trim().slice(0, 100);
   const forDept = String(body?.forDept ?? "").trim().slice(0, 100);

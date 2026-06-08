@@ -54,6 +54,7 @@ const VIEW_META = {
 };
 const GOODS_STORAGE_KEY = "monitoring-extra-goods";
 const GOODS_PICKER_HIDDEN_KEY = "monitoring-goods-picker-hidden";
+const HIDDEN_DEPTS_STORAGE_KEY = "monitoring-hidden-departments";
 const BASE_GOODS = ["ICT Equipment", "Software", "Office Equipment", "Services"];
 
 function readExtraGoods() {
@@ -77,6 +78,21 @@ function readHiddenPickerGoods() {
     return parsed.filter((x) => typeof x === "string" && String(x).trim()).map((x) => String(x).trim());
   } catch {
     return [];
+  }
+}
+
+function readHiddenDepartments() {
+  try {
+    const raw = localStorage.getItem(HIDDEN_DEPTS_STORAGE_KEY);
+    if (!raw) return { thru: [], for: [] };
+    const parsed = JSON.parse(raw);
+    const clean = (arr) =>
+      (Array.isArray(arr) ? arr : [])
+        .filter((x) => typeof x === "string" && String(x).trim())
+        .map((x) => String(x).trim());
+    return { thru: clean(parsed?.thru), for: clean(parsed?.for) };
+  } catch {
+    return { thru: [], for: [] };
   }
 }
 
@@ -109,23 +125,29 @@ function mergeGoodsOptions(extraGoods, projects, hiddenPickerGoods) {
   for (const p of projects) push(p.goods);
   return out;
 }
-const ICTSSD = ["Signed", "Receive", "Pending"];
+const ICTSSD = ["Pending", "Signed", "Unsigned", "Return"];
 const GAD = ["Pending", "Signed", "Unsigned", "Return"];
-const CASH = ["Received", "Return"];
+const CASH = ["Pending", "Signed", "Unsigned", "Return"];
 const PAYMENT_FILTERS = ["All", "Signed", "Receive", "Received", "Pending", "Unsigned", "Return"];
 const BASE_THRU = ["NCD", "ITMG", "BAC", "PMO", "PSD", "PCEO"];
 const BASE_FOR = ["SSC", "PCEO", "NCD", "ITMG", "BAC", "PMO", "PSD", "PPMD", "BUDGET", "LEGAL", "ESD", "OPSD", "PMERD", "LDD"];
 /** Hard cap for department name (Thru / For lists; Oracle NAME is VARCHAR2(100)). */
 const MAX_DEPARTMENT_NAME_LENGTH = 100;
 
-function mergeDepartmentOptions(baseList, dbDepartments, kind, records, recordKey) {
+function isBaseDepartmentName(name, kind) {
+  const list = kind === "thru" ? BASE_THRU : BASE_FOR;
+  return list.some((x) => x.toLowerCase() === String(name ?? "").trim().toLowerCase());
+}
+
+function mergeDepartmentOptions(baseList, dbDepartments, kind, records, recordKey, hiddenNames = []) {
+  const hidden = new Set(hiddenNames.map((name) => String(name).trim().toLowerCase()).filter(Boolean));
   const seen = new Set();
   const out = [];
   const push = (name) => {
     const t = String(name ?? "").trim();
     if (!t) return;
     const k = t.toLowerCase();
-    if (seen.has(k)) return;
+    if (hidden.has(k) || seen.has(k)) return;
     seen.add(k);
     out.push(t);
   };
@@ -151,6 +173,7 @@ function DeptSelectWithAdd({
   addError,
   onAddCommit,
   addAriaLabel,
+  onManageOpen,
   requiredMark = false,
   requiredWarning = false,
   showPlaceholderOption = false,
@@ -161,30 +184,45 @@ function DeptSelectWithAdd({
         <label className="form-label-with-action__text" htmlFor={id}>
           <span>{label}{requiredMark ? " *" : ""}</span>
         </label>
-        {addVisible ? (
-          <button type="button" className="goods-cancel-btn" aria-label="Cancel" onClick={onAddCancel}>
-            <span className="goods-btn__icon">
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <line x1="4" y1="4" x2="12" y2="12" />
-                <line x1="12" y1="4" x2="4" y2="12" />
-              </svg>
-            </span>
-            <span className="goods-btn__label">Cancel</span>
-          </button>
-        ) : (
-          <button type="button" className="goods-add-btn goods-add-btn--dept" aria-label={addAriaLabel} onClick={onAddOpen}>
-            <span className="goods-btn__icon">
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <line x1="8" y1="2" x2="8" y2="14" />
-                <line x1="2" y1="8" x2="14" y2="8" />
-              </svg>
-            </span>
-            <span className="goods-btn__label">Add Department</span>
-          </button>
-        )}
+        <div className="form-label-with-action__actions">
+          {addVisible ? (
+            <button type="button" className="goods-cancel-btn" aria-label="Cancel" onClick={onAddCancel}>
+              <span className="goods-btn__icon">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <line x1="4" y1="4" x2="12" y2="12" />
+                  <line x1="12" y1="4" x2="4" y2="12" />
+                </svg>
+              </span>
+              <span className="goods-btn__label">Cancel</span>
+            </button>
+          ) : (
+            <>
+              <button type="button" className="goods-add-btn goods-add-btn--dept" aria-label={addAriaLabel} onClick={onAddOpen}>
+                <span className="goods-btn__icon">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <line x1="8" y1="2" x2="8" y2="14" />
+                    <line x1="2" y1="8" x2="14" y2="8" />
+                  </svg>
+                </span>
+                <span className="goods-btn__label">Add Department</span>
+              </button>
+              <button
+                type="button"
+                className="goods-add-btn goods-add-btn--dept goods-add-btn--manage"
+                aria-label="Rename or delete department"
+                onClick={onManageOpen}
+              >
+                <span className="goods-btn__icon">
+                  <GoodsEditIcon />
+                </span>
+                <span className="goods-btn__label">Rename or Delete Department</span>
+              </button>
+            </>
+          )}
+        </div>
       </div>
       {!addVisible ? (
-        <select id={id} value={value} onChange={onChange} aria-invalid={requiredWarning}>
+        <select id={id} className="form-dept-select" value={value} onChange={onChange} aria-invalid={requiredWarning}>
           {showPlaceholderOption ? <option value="">Select department</option> : null}
           {options.map((o) => (
             <option key={o} value={o}>
@@ -236,8 +274,8 @@ const MAX_DV_VOUCHER_LENGTH = 20;
 const MAX_OUTGOING_SUBJECT_LENGTH = 500;
 /** Hard cap for outgoing memo number — letters, digits, and hyphens only. */
 const MAX_OUTGOING_MEMO_NO_LENGTH = 20;
-const OUTGOING_MEMO_NO_ALLOWED = /[^A-Za-z0-9-]/g;
-const OUTGOING_MEMO_NO_DISALLOWED = /[^A-Za-z0-9-]/;
+const OUTGOING_MEMO_NO_ALLOWED = /[^A-Za-z0-9- ]/g;
+const OUTGOING_MEMO_NO_DISALLOWED = /[^A-Za-z0-9- ]/;
 const OUTGOING_REQUIRED_MSG = "This field is required.";
 const blankOutgoingRequiredWarnings = {
   subject: false,
@@ -270,7 +308,7 @@ const blankProjectMoneyWarnings = {
   contractName: { maxLength: false },
   duration: { maxLength: false },
 };
-const blankPayment = { title: "", claimantAddress: "", voucherNo: "", amount: "", date: "", ictssd: "Pending", gad: "Pending", cash: "Received" };
+const blankPayment = { title: "", claimantAddress: "", voucherNo: "", amount: "", date: "", ictssd: "Pending", gad: "Pending", cash: "Pending" };
 const blankOutgoing = { subject: "", memoNo: "", date: "", thru: "", forDept: "" };
 const LANDING_BUILDING_IMAGE = "/sss-building.jpg";
 const LANDING_LOGO_IMAGE = "https://www.sss.gov.ph/wp-content/uploads/2024/09/SSS-favicon.png";
@@ -538,6 +576,7 @@ function App() {
   const [projectMoneyWarnings, setProjectMoneyWarnings] = useState(blankProjectMoneyWarnings);
   const [extraGoods, setExtraGoods] = useState(readExtraGoods);
   const [hiddenPickerGoods, setHiddenPickerGoods] = useState(readHiddenPickerGoods);
+  const [hiddenDepartments, setHiddenDepartments] = useState(readHiddenDepartments);
   const [goodsAddVisible, setGoodsAddVisible] = useState(false);
   const [goodsAddDraft, setGoodsAddDraft] = useState("");
   const [goodsAddError, setGoodsAddError] = useState("");
@@ -584,9 +623,13 @@ function App() {
   const [forAddVisible, setForAddVisible] = useState(false);
   const [forAddDraft, setForAddDraft] = useState("");
   const [forAddError, setForAddError] = useState("");
+  const [deptManageModal, setDeptManageModal] = useState(null);
+  const [deptManageSelectedName, setDeptManageSelectedName] = useState("");
+  const [deptManageRenameDraft, setDeptManageRenameDraft] = useState("");
+  const [deptManageError, setDeptManageError] = useState("");
   const [dvTitleWarning, setDvTitleWarning] = useState(false);
   const [dvClaimantWarning, setDvClaimantWarning] = useState(false);
-  const [dvVoucherWarning, setDvVoucherWarning] = useState({ nonNumeric: false, maxLength: false });
+  const [dvVoucherWarning, setDvVoucherWarning] = useState({ maxLength: false });
   const [dvAmountWarning, setDvAmountWarning] = useState({ invalidChars: false, maxDigits: false });
   const [paymentRequiredWarnings, setPaymentRequiredWarnings] = useState(blankPaymentRequiredWarnings);
   const [projectRequiredWarnings, setProjectRequiredWarnings] = useState(blankProjectRequiredWarnings);
@@ -621,7 +664,7 @@ function App() {
     setPaymentEditForm(blankPayment);
     setDvTitleWarning(false);
     setDvClaimantWarning(false);
-    setDvVoucherWarning({ nonNumeric: false, maxLength: false });
+    setDvVoucherWarning({ maxLength: false });
     setDvAmountWarning({ invalidChars: false, maxDigits: false });
     setPaymentSaveError("");
   };
@@ -637,6 +680,9 @@ function App() {
     setForAddVisible(false);
     setForAddDraft("");
     setForAddError("");
+    setDeptManageModal(null);
+    setDeptManageRenameDraft("");
+    setDeptManageError("");
     setOutgoingSaveError("");
   };
   const currentViewMeta = VIEW_META[view];
@@ -679,6 +725,14 @@ function App() {
       /* ignore */
     }
   }, [hiddenPickerGoods]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(HIDDEN_DEPTS_STORAGE_KEY, JSON.stringify(hiddenDepartments));
+    } catch {
+      /* ignore */
+    }
+  }, [hiddenDepartments]);
 
   const goodsOptions = useMemo(() => mergeGoodsOptions(extraGoods, projects, hiddenPickerGoods), [extraGoods, projects, hiddenPickerGoods]);
   const goodsFilterOptions = useMemo(() => ["All Goods", ...goodsOptions], [goodsOptions]);
@@ -842,12 +896,12 @@ function App() {
   }, [outgoing, outgoingSearch, outgoingFilter]);
 
   const thruDeptOptions = useMemo(
-    () => mergeDepartmentOptions(BASE_THRU, departments, "thru", outgoing, "thru"),
-    [departments, outgoing],
+    () => mergeDepartmentOptions(BASE_THRU, departments, "thru", outgoing, "thru", hiddenDepartments.thru),
+    [departments, outgoing, hiddenDepartments.thru],
   );
   const forDeptOptions = useMemo(
-    () => mergeDepartmentOptions(BASE_FOR, departments, "for", outgoing, "forDept"),
-    [departments, outgoing],
+    () => mergeDepartmentOptions(BASE_FOR, departments, "for", outgoing, "forDept", hiddenDepartments.for),
+    [departments, outgoing, hiddenDepartments.for],
   );
   const forDeptFilterOptions = useMemo(() => ["All", ...forDeptOptions], [forDeptOptions]);
 
@@ -1191,7 +1245,7 @@ function App() {
       showRequiredFieldsAlert();
       return;
     }
-    if (dvVoucherWarning.nonNumeric || dvVoucherWarning.maxLength) {
+    if (dvVoucherWarning.maxLength) {
       setPaymentSaveError("Fix voucher number errors before saving.");
       return;
     }
@@ -1221,7 +1275,7 @@ function App() {
       setPaymentForm(blankPayment);
       setDvTitleWarning(false);
       setDvClaimantWarning(false);
-      setDvVoucherWarning({ nonNumeric: false, maxLength: false });
+      setDvVoucherWarning({ maxLength: false });
       setDvAmountWarning({ invalidChars: false, maxDigits: false });
       setPaymentRequiredWarnings(blankPaymentRequiredWarnings);
     } catch (err) {
@@ -1264,8 +1318,8 @@ function App() {
     e.preventDefault();
     setOutgoingSaveError("");
 
-    if (thruAddVisible || forAddVisible) {
-      setOutgoingSaveError("Save or cancel the new department before adding the outgoing record.");
+    if (thruAddVisible || forAddVisible || deptManageModal) {
+      setOutgoingSaveError("Save or cancel department changes before adding the outgoing record.");
       return;
     }
 
@@ -1290,7 +1344,7 @@ function App() {
     const forDept = outgoingForm.forDept.trim();
 
     if (!memoNo) {
-      setOutgoingSaveError("Memo number is required (letters, numbers, and hyphens only).");
+      setOutgoingSaveError("Memo number is required (letters, numbers, hyphens, and spaces only).");
       return;
     }
 
@@ -1318,6 +1372,7 @@ function App() {
       setForAddVisible(false);
       setForAddDraft("");
       setForAddError("");
+      closeDeptManageModal();
     } catch (err) {
       setOutgoingSaveError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -1329,8 +1384,8 @@ function App() {
     if (outgoingEdit == null) return;
     setOutgoingSaveError("");
 
-    if (thruAddVisible || forAddVisible) {
-      setOutgoingSaveError("Save or cancel the new department before saving.");
+    if (thruAddVisible || forAddVisible || deptManageModal) {
+      setOutgoingSaveError("Save or cancel department changes before saving.");
       return;
     }
 
@@ -1346,7 +1401,7 @@ function App() {
       return;
     }
     if (!memoNo) {
-      setOutgoingSaveError("Memo number is required (letters, numbers, and hyphens only).");
+      setOutgoingSaveError("Memo number is required (letters, numbers, hyphens, and spaces only).");
       return;
     }
     if (!thru || !forDept) {
@@ -1405,6 +1460,28 @@ function App() {
   const paymentExport = () => exportCsv("dv-payment-monitoring.csv", [["Title of the Project", "Name and Address of Claimant", "Voucher No.", "Date", "Amount", "ICTSSD", "GAD", "CASH"], ...paymentRows.map((x) => [x.title, x.claimantAddress, x.voucherNo, x.date || "", x.amount, x.ictssd, x.gad, x.cash])]);
   const outgoingExport = () => exportCsv("issd-outgoing-monitoring.csv", [["Subject", "Memo Number", "Date", "Thru", "For"], ...outgoingRows.map((x) => [x.subject, x.memoNo, x.date, x.thru, x.forDept])]);
 
+  const closeDeptManageModal = () => {
+    setDeptManageModal(null);
+    setDeptManageSelectedName("");
+    setDeptManageRenameDraft("");
+    setDeptManageError("");
+  };
+
+  const openDeptManageModal = (kind, fieldKey, label, currentName, setForm, options) => {
+    const initial =
+      options.find((o) => o.toLowerCase() === String(currentName ?? "").trim().toLowerCase()) || options[0] || "";
+    setDeptManageModal({ kind, fieldKey, label, setForm, options });
+    setDeptManageSelectedName(initial);
+    setDeptManageRenameDraft(initial);
+    setDeptManageError("");
+    setThruAddVisible(false);
+    setThruAddDraft("");
+    setThruAddError("");
+    setForAddVisible(false);
+    setForAddDraft("");
+    setForAddError("");
+  };
+
   const commitDepartmentAdd = async (kind, draft, options, formField, setError, setVisible, setDraft, setForm) => {
     const t = draft.trim().slice(0, MAX_DEPARTMENT_NAME_LENGTH);
     if (!t) {
@@ -1435,6 +1512,241 @@ function App() {
     }
   };
 
+  const findDepartmentRecord = (name, kind) =>
+    departments.find((d) => d.kind === kind && d.name.toLowerCase() === String(name ?? "").trim().toLowerCase());
+
+  const hideDepartmentName = (kind, name) => {
+    const trimmed = String(name ?? "").trim();
+    if (!trimmed) return;
+    setHiddenDepartments((prev) => ({
+      thru: prev.thru ?? [],
+      for: prev.for ?? [],
+      [kind]: Array.from(new Set([...(prev[kind] ?? []), trimmed])),
+    }));
+  };
+
+  const resolveDepartmentRecord = async (name, kind, setError) => {
+    const trimmed = String(name ?? "").trim();
+    if (!trimmed) {
+      setError("Select a department.");
+      return null;
+    }
+    const existing = findDepartmentRecord(trimmed, kind);
+    if (existing) return existing;
+
+    try {
+      const res = await fetch("/api/departments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: trimmed, kind }),
+      });
+      const raw = await res.text();
+      let data;
+      try {
+        data = raw ? JSON.parse(raw) : null;
+      } catch {
+        data = null;
+      }
+      if (res.status === 409) {
+        const listRes = await fetch("/api/departments");
+        const listRaw = await listRes.text();
+        let list;
+        try {
+          list = listRaw ? JSON.parse(listRaw) : [];
+        } catch {
+          list = [];
+        }
+        if (listRes.ok && Array.isArray(list)) {
+          setDepartments(list);
+          return list.find((d) => d.kind === kind && d.name.toLowerCase() === trimmed.toLowerCase()) ?? null;
+        }
+      }
+      if (!res.ok) throw new Error((data && data.message) || raw || "Department lookup failed");
+      setDepartments((cur) => [...cur, data]);
+      return data;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      return null;
+    }
+  };
+
+  const applyDepartmentDeleteFallback = (kind, name, options, formField, setForm) => {
+    const nextOptions = options.filter((x) => x.toLowerCase() !== name.toLowerCase());
+    const fallback = nextOptions[0] || "";
+    setForm((f) => ({ ...f, [formField]: f[formField] === name ? fallback : f[formField] }));
+    if (outgoingForm[formField] === name) {
+      setOutgoingForm((f) => ({ ...f, [formField]: fallback }));
+    }
+    if (outgoingEditForm[formField] === name) {
+      setOutgoingEditForm((f) => ({ ...f, [formField]: fallback }));
+    }
+    if (kind === "for" && outgoingFilter === name) setOutgoingFilter("All");
+  };
+
+  const patchDepartmentField = (kind, oldName, newName, formField) => {
+    const field = kind === "thru" ? "thru" : "forDept";
+    setOutgoing((cur) =>
+      cur.map((r) => (r[field].toLowerCase() === oldName.toLowerCase() ? { ...r, [field]: newName } : r)),
+    );
+    setOutgoingForm((f) => ({ ...f, [formField]: f[formField] === oldName ? newName : f[formField] }));
+    setOutgoingEditForm((f) => ({ ...f, [formField]: f[formField] === oldName ? newName : f[formField] }));
+    if (kind === "for" && outgoingFilter === oldName) setOutgoingFilter(newName);
+  };
+
+  const commitDepartmentRename = async (
+    kind,
+    currentName,
+    renameDraft,
+    options,
+    formField,
+    setForm,
+    onClose,
+    setError,
+  ) => {
+    const newName = renameDraft.trim().slice(0, MAX_DEPARTMENT_NAME_LENGTH);
+    if (!newName) {
+      setError("Enter a name.");
+      return;
+    }
+    if (newName.toLowerCase() === String(currentName ?? "").trim().toLowerCase()) {
+      onClose();
+      return;
+    }
+    if (
+      options.some(
+        (x) => x.toLowerCase() === newName.toLowerCase() && x.toLowerCase() !== String(currentName ?? "").trim().toLowerCase(),
+      )
+    ) {
+      setError("That department is already listed.");
+      return;
+    }
+
+    const dept = await resolveDepartmentRecord(currentName, kind, setError);
+    if (!dept) {
+      if (isBaseDepartmentName(currentName, kind)) {
+        hideDepartmentName(kind, currentName);
+        patchDepartmentField(kind, currentName, newName, formField);
+        setForm((f) => ({ ...f, [formField]: f[formField] === currentName ? newName : f[formField] }));
+        try {
+          const createRes = await fetch("/api/departments", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: newName, kind }),
+          });
+          const createRaw = await createRes.text();
+          let created;
+          try {
+            created = createRaw ? JSON.parse(createRaw) : null;
+          } catch {
+            created = null;
+          }
+          if (createRes.ok && created) {
+            setDepartments((cur) => [...cur, created]);
+          }
+        } catch {
+          /* keep UI rename even if save fails */
+        }
+        onClose();
+      }
+      return;
+    }
+
+    setError("");
+    try {
+      const res = await fetch(`/api/departments/${dept.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newName }),
+      });
+      const raw = await res.text();
+      let data;
+      try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
+      if (!res.ok) throw new Error((data && data.message) || raw || "Rename failed");
+      setDepartments((cur) => cur.map((d) => (d.id === dept.id ? data : d)));
+      if (isBaseDepartmentName(dept.name, kind)) hideDepartmentName(kind, dept.name);
+      patchDepartmentField(kind, dept.name, newName, formField);
+      setForm((f) => ({ ...f, [formField]: f[formField] === dept.name ? newName : f[formField] }));
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const commitDepartmentDelete = async (
+    kind,
+    currentName,
+    options,
+    formField,
+    setForm,
+    onClose,
+    setError,
+  ) => {
+    const trimmed = String(currentName ?? "").trim();
+    if (!trimmed) {
+      setError("Select a department.");
+      return;
+    }
+
+    await new Promise((resolve) => setConfirmModal({ title: trimmed, onConfirm: resolve }));
+    setConfirmModal(null);
+    setError("");
+
+    const dept = await resolveDepartmentRecord(trimmed, kind, setError);
+    if (!dept) {
+      if (isBaseDepartmentName(trimmed, kind)) {
+        hideDepartmentName(kind, trimmed);
+        applyDepartmentDeleteFallback(kind, trimmed, options, formField, setForm);
+        onClose();
+      }
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/departments/${dept.id}`, { method: "DELETE" });
+      if (!res.ok && res.status !== 204) {
+        const raw = await res.text();
+        let msg;
+        try { msg = raw ? JSON.parse(raw).message : null; } catch { msg = raw; }
+        throw new Error(msg || "Delete failed");
+      }
+      setDepartments((cur) => cur.filter((d) => d.id !== dept.id));
+      if (isBaseDepartmentName(dept.name, kind)) hideDepartmentName(kind, dept.name);
+      applyDepartmentDeleteFallback(kind, dept.name, options, formField, setForm);
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const commitDeptManageRename = () => {
+    if (!deptManageModal) return;
+    const { kind, fieldKey, setForm, options } = deptManageModal;
+    return commitDepartmentRename(
+      kind,
+      deptManageSelectedName,
+      deptManageRenameDraft,
+      options,
+      fieldKey,
+      setForm,
+      closeDeptManageModal,
+      setDeptManageError,
+    );
+  };
+
+  const commitDeptManageDelete = () => {
+    if (!deptManageModal) return;
+    const { kind, fieldKey, setForm, options } = deptManageModal;
+    return commitDepartmentDelete(
+      kind,
+      deptManageSelectedName,
+      options,
+      fieldKey,
+      setForm,
+      closeDeptManageModal,
+      setDeptManageError,
+    );
+  };
+
   const renderOutgoingDeptPickers = (form, setForm, thruId, forId, requiredWarnings, setRequiredWarnings) => (
     <div className="form-row form-row--dept-pickers">
       <DeptSelectWithAdd
@@ -1457,6 +1769,7 @@ function App() {
           setForAddVisible(false);
           setForAddDraft("");
           setForAddError("");
+          closeDeptManageModal();
         }}
         onAddCancel={() => {
           setThruAddVisible(false);
@@ -1471,6 +1784,7 @@ function App() {
         addError={thruAddError}
         onAddCommit={() => void commitDepartmentAdd("thru", thruAddDraft, thruDeptOptions, "thru", setThruAddError, setThruAddVisible, setThruAddDraft, setForm)}
         addAriaLabel="Add Department"
+        onManageOpen={() => openDeptManageModal("thru", "thru", "Thru", form.thru, setForm, thruDeptOptions)}
       />
       <DeptSelectWithAdd
         label="For"
@@ -1492,6 +1806,7 @@ function App() {
           setThruAddVisible(false);
           setThruAddDraft("");
           setThruAddError("");
+          closeDeptManageModal();
         }}
         onAddCancel={() => {
           setForAddVisible(false);
@@ -1506,6 +1821,7 @@ function App() {
         addError={forAddError}
         onAddCommit={() => void commitDepartmentAdd("for", forAddDraft, forDeptOptions, "forDept", setForAddError, setForAddVisible, setForAddDraft, setForm)}
         addAriaLabel="Add Department"
+        onManageOpen={() => openDeptManageModal("for", "forDept", "For", form.forDept, setForm, forDeptOptions)}
       />
     </div>
   );
@@ -1955,7 +2271,7 @@ function App() {
             ) : null}
             {!outgoingRequiredWarnings.memoNo && (outgoingMemoNoWarning.invalidChars || outgoingMemoNoWarning.maxLength) ? (
               <p className="form-field-warning" role="alert">
-                {outgoingMemoNoWarning.invalidChars ? "Only letters, numbers, and hyphens are allowed. " : null}
+                {outgoingMemoNoWarning.invalidChars ? "Only letters, numbers, hyphens, and spaces are allowed. " : null}
                 {outgoingMemoNoWarning.maxLength ? `At most ${MAX_OUTGOING_MEMO_NO_LENGTH} characters are allowed.` : null}
               </p>
             ) : null}
@@ -2003,6 +2319,7 @@ function App() {
             setForAddVisible(false);
             setForAddDraft("");
             setForAddError("");
+            closeDeptManageModal();
           }}
         >
           Clear form
@@ -2073,34 +2390,30 @@ function App() {
           <span>Voucher No. *</span>
           <input
             type="text"
-            inputMode="numeric"
             autoComplete="off"
             value={paymentForm.voucherNo}
             onChange={(e) => {
               const raw = e.target.value;
-              const digitsOnly = raw.replace(/\D/g, "");
-              const capped = digitsOnly.slice(0, MAX_DV_VOUCHER_LENGTH);
+              const capped = raw.slice(0, MAX_DV_VOUCHER_LENGTH);
               setPaymentForm({ ...paymentForm, voucherNo: capped });
               setPaymentRequiredWarnings((w) => ({ ...w, voucherNo: false }));
               setDvVoucherWarning({
-                nonNumeric: /\D/.test(raw),
-                maxLength: digitsOnly.length > MAX_DV_VOUCHER_LENGTH,
+                maxLength: raw.length > MAX_DV_VOUCHER_LENGTH,
               });
             }}
-            onBlur={() => setDvVoucherWarning({ nonNumeric: false, maxLength: false })}
+            onBlur={() => setDvVoucherWarning({ maxLength: false })}
             placeholder="Enter voucher number"
             aria-invalid={
-              paymentRequiredWarnings.voucherNo || dvVoucherWarning.nonNumeric || dvVoucherWarning.maxLength
+              paymentRequiredWarnings.voucherNo || dvVoucherWarning.maxLength
             }
           />
           <div className="form-field-warning-slot">
             {paymentRequiredWarnings.voucherNo ? (
               <p className="form-field-warning" role="alert">{OUTGOING_REQUIRED_MSG}</p>
             ) : null}
-            {!paymentRequiredWarnings.voucherNo && (dvVoucherWarning.nonNumeric || dvVoucherWarning.maxLength) ? (
+            {!paymentRequiredWarnings.voucherNo && dvVoucherWarning.maxLength ? (
               <p className="form-field-warning" role="alert">
-                {dvVoucherWarning.nonNumeric ? "Numbers only. " : null}
-                {dvVoucherWarning.maxLength ? `At most ${MAX_DV_VOUCHER_LENGTH} digits are allowed.` : null}
+                {`At most ${MAX_DV_VOUCHER_LENGTH} characters are allowed.`}
               </p>
             ) : null}
           </div>
@@ -2199,7 +2512,7 @@ function App() {
             setPaymentSaveError("");
             setDvTitleWarning(false);
             setDvClaimantWarning(false);
-            setDvVoucherWarning({ nonNumeric: false, maxLength: false });
+            setDvVoucherWarning({ maxLength: false });
             setDvAmountWarning({ invalidChars: false, maxDigits: false });
             setPaymentRequiredWarnings(blankPaymentRequiredWarnings);
           }}
@@ -2640,21 +2953,19 @@ function App() {
                   <span>Voucher No.</span>
                   <input
                     type="text"
-                    inputMode="numeric"
                     autoComplete="off"
                     value={paymentEditForm.voucherNo}
                     onChange={(e) => {
                       const raw = e.target.value;
-                      const digitsOnly = raw.replace(/\D/g, "");
-                      const capped = digitsOnly.slice(0, MAX_DV_VOUCHER_LENGTH);
+                      const capped = raw.slice(0, MAX_DV_VOUCHER_LENGTH);
                       setPaymentEditForm({ ...paymentEditForm, voucherNo: capped });
-                      setDvVoucherWarning({ nonNumeric: /\D/.test(raw), maxLength: digitsOnly.length > MAX_DV_VOUCHER_LENGTH });
+                      setDvVoucherWarning({ maxLength: raw.length > MAX_DV_VOUCHER_LENGTH });
                     }}
-                    onBlur={() => setDvVoucherWarning({ nonNumeric: false, maxLength: false })}
+                    onBlur={() => setDvVoucherWarning({ maxLength: false })}
                     placeholder="Enter voucher number"
-                    aria-invalid={dvVoucherWarning.nonNumeric || dvVoucherWarning.maxLength}
+                    aria-invalid={dvVoucherWarning.maxLength}
                   />
-                  <div className="form-field-warning-slot">{(dvVoucherWarning.nonNumeric || dvVoucherWarning.maxLength) ? <p className="form-field-warning" role="alert">{dvVoucherWarning.nonNumeric ? "Numbers only. " : null}{dvVoucherWarning.maxLength ? `At most ${MAX_DV_VOUCHER_LENGTH} digits are allowed.` : null}</p> : null}</div>
+                  <div className="form-field-warning-slot">{dvVoucherWarning.maxLength ? <p className="form-field-warning" role="alert">{`At most ${MAX_DV_VOUCHER_LENGTH} characters are allowed.`}</p> : null}</div>
                 </label>
                 <label>
                   <span>Amount</span>
@@ -2728,7 +3039,7 @@ function App() {
             <form className="record-form" onSubmit={saveOutgoingEdit}>
               <label><span>Subject</span><textarea value={outgoingEditForm.subject} onChange={(e) => { const raw = e.target.value; const capped = raw.slice(0, MAX_OUTGOING_SUBJECT_LENGTH); setOutgoingEditForm({ ...outgoingEditForm, subject: capped }); setOutgoingSubjectWarning(raw.length > MAX_OUTGOING_SUBJECT_LENGTH); }} onBlur={() => setOutgoingSubjectWarning(false)} placeholder="Enter the memo subject" aria-invalid={outgoingSubjectWarning} /><div className="form-field-warning-slot">{outgoingSubjectWarning ? <p className="form-field-warning" role="alert">{`At most ${MAX_OUTGOING_SUBJECT_LENGTH} characters are allowed.`}</p> : null}</div></label>
               <div className="form-row">
-                <label><span>Memo Number</span><input type="text" autoComplete="off" value={outgoingEditForm.memoNo} onChange={(e) => { const raw = e.target.value; const allowedOnly = raw.replace(OUTGOING_MEMO_NO_ALLOWED, ""); const capped = allowedOnly.slice(0, MAX_OUTGOING_MEMO_NO_LENGTH); setOutgoingEditForm({ ...outgoingEditForm, memoNo: capped }); setOutgoingMemoNoWarning({ invalidChars: OUTGOING_MEMO_NO_DISALLOWED.test(raw), maxLength: allowedOnly.length > MAX_OUTGOING_MEMO_NO_LENGTH }); }} onBlur={() => setOutgoingMemoNoWarning({ invalidChars: false, maxLength: false })} placeholder="ISSD-YYYY-000" aria-invalid={outgoingMemoNoWarning.invalidChars || outgoingMemoNoWarning.maxLength} /><div className="form-field-warning-slot">{(outgoingMemoNoWarning.invalidChars || outgoingMemoNoWarning.maxLength) ? <p className="form-field-warning" role="alert">{outgoingMemoNoWarning.invalidChars ? "Only letters, numbers, and hyphens are allowed. " : null}{outgoingMemoNoWarning.maxLength ? `At most ${MAX_OUTGOING_MEMO_NO_LENGTH} characters are allowed.` : null}</p> : null}</div></label>
+                <label><span>Memo Number</span><input type="text" autoComplete="off" value={outgoingEditForm.memoNo} onChange={(e) => { const raw = e.target.value; const allowedOnly = raw.replace(OUTGOING_MEMO_NO_ALLOWED, ""); const capped = allowedOnly.slice(0, MAX_OUTGOING_MEMO_NO_LENGTH); setOutgoingEditForm({ ...outgoingEditForm, memoNo: capped }); setOutgoingMemoNoWarning({ invalidChars: OUTGOING_MEMO_NO_DISALLOWED.test(raw), maxLength: allowedOnly.length > MAX_OUTGOING_MEMO_NO_LENGTH }); }} onBlur={() => setOutgoingMemoNoWarning({ invalidChars: false, maxLength: false })} placeholder="ISSD-YYYY-000" aria-invalid={outgoingMemoNoWarning.invalidChars || outgoingMemoNoWarning.maxLength} /><div className="form-field-warning-slot">{(outgoingMemoNoWarning.invalidChars || outgoingMemoNoWarning.maxLength) ? <p className="form-field-warning" role="alert">{outgoingMemoNoWarning.invalidChars ? "Only letters, numbers, hyphens, and spaces are allowed. " : null}{outgoingMemoNoWarning.maxLength ? `At most ${MAX_OUTGOING_MEMO_NO_LENGTH} characters are allowed.` : null}</p> : null}</div></label>
                 <label><span>Date</span><input type="date" title="Choose a date using the calendar" value={outgoingEditForm.date} onKeyDown={blockDateFieldDirectEntry} onPaste={(e) => e.preventDefault()} onCut={(e) => e.preventDefault()} onChange={(e) => setOutgoingEditForm({ ...outgoingEditForm, date: e.target.value })} /></label>
               </div>
               {outgoingEditDeptPickers}
@@ -2744,6 +3055,86 @@ function App() {
       {requiredFieldsAlert ? (
         <RequiredFieldsAlertModal message={requiredFieldsAlert} onClose={() => setRequiredFieldsAlert(null)} />
       ) : null}
+      {deptManageModal && (
+        <div className="modal-backdrop" onClick={closeDeptManageModal}>
+          <div className="modal-card workspace-modal workspace-modal--dept-manage" onClick={(e) => e.stopPropagation()}>
+            <div className="workspace-modal__header workspace-modal__header--dept-manage">
+              <h3>Rename or Delete Department</h3>
+              <button type="button" className="workspace-modal__close" aria-label="Close" onClick={closeDeptManageModal}>
+                <CloseIcon />
+              </button>
+            </div>
+            <div className="workspace-modal--dept-manage__body record-form">
+              <label className="dept-manage-field">
+                <span>Department</span>
+                <select
+                  value={deptManageSelectedName}
+                  onChange={(e) => {
+                    setDeptManageSelectedName(e.target.value);
+                    setDeptManageRenameDraft(e.target.value);
+                    setDeptManageError("");
+                  }}
+                >
+                  {deptManageModal.options.length === 0 ? (
+                    <option value="">No departments listed</option>
+                  ) : (
+                    deptManageModal.options.map((o) => (
+                      <option key={o} value={o}>
+                        {o}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </label>
+              <label className="dept-manage-field">
+                <span>New department name</span>
+                <input
+                  type="text"
+                  autoComplete="off"
+                  value={deptManageRenameDraft}
+                  onChange={(e) => {
+                    setDeptManageRenameDraft(e.target.value.slice(0, MAX_DEPARTMENT_NAME_LENGTH));
+                    setDeptManageError("");
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void commitDeptManageRename();
+                    }
+                  }}
+                  placeholder="Enter new name"
+                />
+              </label>
+              <div className="workspace-modal--dept-manage__error-slot">
+                {deptManageError ? (
+                  <p className="form-field-warning" role="alert">{deptManageError}</p>
+                ) : null}
+              </div>
+              <div className="workspace-modal--dept-manage__actions">
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={!deptManageSelectedName}
+                  onClick={() => void commitDeptManageRename()}
+                >
+                  Rename
+                </button>
+                <button
+                  type="button"
+                  className="table-button table-button--danger"
+                  disabled={!deptManageSelectedName}
+                  onClick={() => void commitDeptManageDelete()}
+                >
+                  Delete
+                </button>
+                <button type="button" className="ghost-button" onClick={closeDeptManageModal}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {confirmModal && (
         <div className="modal-backdrop" onClick={() => setConfirmModal(null)}>
           <div className="modal-card workspace-modal workspace-modal--confirm" onClick={(e) => e.stopPropagation()}>
@@ -2922,7 +3313,7 @@ function DonutChart({ data }) {
         current += (item.value / total) * 100;
         return `${palette[index % palette.length]} ${start}% ${current}%`;
       }).join(", ")})`
-    : "conic-gradient(#d6e2f0 0% 100%)";
+    : "conic-gradient(var(--donut-track, #d6e2f0) 0% 100%)";
 
   return (
     <div className="donut-chart" style={{ background }}>
@@ -3242,9 +3633,9 @@ function CloseIcon() {
 
 function GoodsEditIcon() {
   return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M4 20.25h3.5L18 9.75l-3.5-3.5L4 16.75v3.5Z" />
-      <path d="m14.5 5.75 3.5 3.5" />
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M11 2l3 3L5 14H2v-3L11 2z" />
+      <path d="M9 4l3 3" />
     </svg>
   );
 }

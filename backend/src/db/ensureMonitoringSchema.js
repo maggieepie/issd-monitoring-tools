@@ -41,7 +41,7 @@ async function createTableIfAbsent(connection, tableName, createSql) {
   }
 }
 
-/** Adds CREATED_AT and UPDATED_AT to a table if they are missing. */
+/** Adds CREATED_AT, UPDATED_AT, and IS_DELETED to a table if they are missing. */
 async function ensureAuditColumns(connection, tableName) {
   let cols = await listColumns(connection, tableName);
   if (!cols.has("CREATED_AT")) {
@@ -59,7 +59,16 @@ async function ensureAuditColumns(connection, tableName) {
       [],
       { autoCommit: true },
     );
+    cols = await listColumns(connection, tableName);
     console.log(`Oracle: added UPDATED_AT to ${tableName}`);
+  }
+  if (!cols.has("IS_DELETED")) {
+    await connection.execute(
+      `ALTER TABLE ${tableName} ADD (IS_DELETED NUMBER(1) DEFAULT 0 NOT NULL)`,
+      [],
+      { autoCommit: true },
+    );
+    console.log(`Oracle: added IS_DELETED to ${tableName}`);
   }
 }
 
@@ -76,6 +85,7 @@ const PROJECTS_CREATE_SQL = `CREATE TABLE ${PROJECTS_TABLE} (
         GOODS         VARCHAR2(200) NOT NULL,
         AMOUNT        NUMBER(18, 2) NOT NULL,
         OUTSTANDING   NUMBER(18, 2) NOT NULL,
+        IS_DELETED    NUMBER(1)     DEFAULT 0 NOT NULL,
         CREATED_AT    TIMESTAMP     DEFAULT SYSTIMESTAMP NOT NULL,
         UPDATED_AT    TIMESTAMP     DEFAULT SYSTIMESTAMP NOT NULL
       )`;
@@ -94,7 +104,8 @@ const DV_CREATE_SQL = `CREATE TABLE ${DV_TABLE} (
         AMOUNT           NUMBER(18, 2) DEFAULT 0 NOT NULL,
         ICTSSD           VARCHAR2(100) DEFAULT 'Pending'  NOT NULL,
         GAD              VARCHAR2(100) DEFAULT 'Pending'  NOT NULL,
-        CASH             VARCHAR2(100) DEFAULT 'Received' NOT NULL,
+        CASH             VARCHAR2(100) DEFAULT 'Pending'  NOT NULL,
+        IS_DELETED       NUMBER(1)     DEFAULT 0 NOT NULL,
         CREATED_AT       TIMESTAMP     DEFAULT SYSTIMESTAMP NOT NULL,
         UPDATED_AT       TIMESTAMP     DEFAULT SYSTIMESTAMP NOT NULL
       )`;
@@ -111,6 +122,7 @@ const OUTGOING_CREATE_SQL = `CREATE TABLE ${OUTGOING_TABLE} (
         MEMO_DATE   DATE           NOT NULL,
         THRU        VARCHAR2(100)  NOT NULL,
         FOR_DEPT    VARCHAR2(100)  NOT NULL,
+        IS_DELETED  NUMBER(1)      DEFAULT 0 NOT NULL,
         CREATED_AT  TIMESTAMP      DEFAULT SYSTIMESTAMP NOT NULL,
         UPDATED_AT  TIMESTAMP      DEFAULT SYSTIMESTAMP NOT NULL
       )`;
@@ -131,6 +143,7 @@ const POLICIES_CREATE_SQL = `CREATE TABLE ${POLICIES_TABLE} (
         DAYS_COUNT        NUMBER(10),
         STATUS_LABEL      VARCHAR2(50)  NOT NULL,
         REMARKS           VARCHAR2(2000),
+        IS_DELETED        NUMBER(1)     DEFAULT 0 NOT NULL,
         CREATED_AT        TIMESTAMP     DEFAULT SYSTIMESTAMP NOT NULL,
         UPDATED_AT        TIMESTAMP     DEFAULT SYSTIMESTAMP NOT NULL
       )`;
@@ -141,6 +154,7 @@ const DEPARTMENTS_CREATE_SQL = `CREATE TABLE ${DEPARTMENTS_TABLE} (
         NAME        VARCHAR2(100) NOT NULL,
         KIND        VARCHAR2(10)  NOT NULL,
         IS_BUILTIN  NUMBER(1)     DEFAULT 0 NOT NULL,
+        IS_DELETED  NUMBER(1)     DEFAULT 0 NOT NULL,
         CREATED_AT  TIMESTAMP     DEFAULT SYSTIMESTAMP NOT NULL,
         UPDATED_AT  TIMESTAMP     DEFAULT SYSTIMESTAMP NOT NULL
       )`;

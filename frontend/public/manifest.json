@@ -1,0 +1,17 @@
+{
+  "name": "ISSD Monitoring Tools",
+  "short_name": "ISSD Monitor",
+  "description": "ISSD Operations Hub — Project, DV Payment, Outgoing, and Policy monitoring.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f4c81",
+  "theme_color": "#0f4c81",
+  "icons": [
+    {
+      "src": "/sss-logo.png",
+      "sizes": "any",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

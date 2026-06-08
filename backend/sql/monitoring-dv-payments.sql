@@ -34,7 +34,8 @@ BEGIN
       AMOUNT           NUMBER(18, 2)   DEFAULT 0 NOT NULL,
       ICTSSD           VARCHAR2(100)   DEFAULT 'Pending' NOT NULL,
       GAD              VARCHAR2(100)   DEFAULT 'Pending' NOT NULL,
-      CASH             VARCHAR2(100)   DEFAULT 'Received' NOT NULL,
+      CASH             VARCHAR2(100)   DEFAULT 'Pending' NOT NULL,
+      IS_DELETED       NUMBER(1)       DEFAULT 0 NOT NULL,
       CREATED_AT       TIMESTAMP       DEFAULT SYSTIMESTAMP NOT NULL,
       UPDATED_AT       TIMESTAMP       DEFAULT SYSTIMESTAMP NOT NULL
     )
@@ -48,7 +49,7 @@ END;
 /
 
 --------------------------------------------------------------------------------
--- Upgrade: add audit columns if the table predates CREATED_AT / UPDATED_AT
+-- Upgrade: add columns if missing (safe to re-run on existing tables)
 --------------------------------------------------------------------------------
 
 DECLARE
@@ -66,6 +67,13 @@ BEGIN
   IF c = 0 THEN
     EXECUTE IMMEDIATE
       q'[ALTER TABLE MONITORING_DV_PAYMENTS ADD (UPDATED_AT TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL)]';
+  END IF;
+
+  SELECT COUNT(*) INTO c FROM user_tab_columns
+   WHERE table_name = 'MONITORING_DV_PAYMENTS' AND column_name = 'IS_DELETED';
+  IF c = 0 THEN
+    EXECUTE IMMEDIATE
+      q'[ALTER TABLE MONITORING_DV_PAYMENTS ADD (IS_DELETED NUMBER(1) DEFAULT 0 NOT NULL)]';
   END IF;
 END;
 /

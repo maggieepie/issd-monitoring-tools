@@ -28,7 +28,7 @@ const SELECT_COLS = `ID, NAME, KIND, IS_BUILTIN, CREATED_AT, UPDATED_AT`;
 
 async function seedBuiltinDepartments(connection) {
   const countResult = await connection.execute(
-    `SELECT COUNT(*) AS CNT FROM ${TABLE}`,
+    `SELECT COUNT(*) AS CNT FROM ${TABLE} WHERE IS_DELETED = 0 OR IS_DELETED IS NULL`,
     [],
     { outFormat: oracledb.OUT_FORMAT_OBJECT },
   );
@@ -60,8 +60,8 @@ async function listDepartments(kind) {
     const normalizedKind = kind ? String(kind).trim().toLowerCase() : "";
     const sql =
       normalizedKind === "thru" || normalizedKind === "for"
-        ? `SELECT ${SELECT_COLS} FROM ${TABLE} WHERE KIND = :kind ORDER BY NAME ASC`
-        : `SELECT ${SELECT_COLS} FROM ${TABLE} ORDER BY KIND ASC, NAME ASC`;
+        ? `SELECT ${SELECT_COLS} FROM ${TABLE} WHERE KIND = :kind AND (IS_DELETED = 0 OR IS_DELETED IS NULL) ORDER BY NAME ASC`
+        : `SELECT ${SELECT_COLS} FROM ${TABLE} WHERE IS_DELETED = 0 OR IS_DELETED IS NULL ORDER BY KIND ASC, NAME ASC`;
     const binds = normalizedKind === "thru" || normalizedKind === "for" ? { kind: normalizedKind } : {};
     const result = await connection.execute(sql, binds, {
       outFormat: oracledb.OUT_FORMAT_OBJECT,
@@ -75,7 +75,7 @@ async function listDepartments(kind) {
 async function findDepartmentByNameKind(connection, name, kind) {
   const result = await connection.execute(
     `SELECT ${SELECT_COLS} FROM ${TABLE}
-      WHERE UPPER(NAME) = UPPER(:name) AND KIND = :kind`,
+      WHERE UPPER(NAME) = UPPER(:name) AND KIND = :kind AND (IS_DELETED = 0 OR IS_DELETED IS NULL)`,
     { name, kind },
     { outFormat: oracledb.OUT_FORMAT_OBJECT },
   );
@@ -106,4 +106,88 @@ async function createDepartment(payload) {
   }
 }
 
-export { createDepartment, listDepartments, seedBuiltinDepartments };
+async function findDepartmentById(connection, id) {
+  const result = await connection.execute(
+    `SELECT ${SELECT_COLS} FROM ${TABLE} WHERE ID = :id AND (IS_DELETED = 0 OR IS_DELETED IS NULL)`,
+    { id },
+    { outFormat: oracledb.OUT_FORMAT_OBJECT },
+  );
+  return mapRow(result.rows?.[0]);
+}
+
+async function updateDepartment(id, payload) {
+  const pool = getPool();
+  const connection = await pool.getConnection();
+  try {
+    const current = await findDepartmentById(connection, id);
+    if (!current) {
+      const err = new Error("Department not found");
+      err.status = 404;
+      throw err;
+    }
+    const name = String(payload.name ?? "").trim().slice(0, 100);
+    if (!name) {
+      const err = new Error("name is required.");
+      err.status = 400;
+      throw err;
+    }
+    const duplicate = await findDepartmentByNameKind(connection, name, current.kind);
+    if (duplicate && duplicate.id !== id) {
+      const err = new Error("That department is already listed for this field.");
+      err.status = 409;
+      throw err;
+    }
+    const oldName = current.name;
+    await connection.execute(
+      `UPDATE ${TABLE} SET NAME = :name, UPDATED_AT = SYSTIMESTAMP WHERE ID = :id`,
+      { id, name },
+      { autoCommit: false },
+    );
+    const outgoingColumn = current.kind === "thru" ? "THRU" : "FOR_DEPT";
+    await connection.execute(
+      `UPDATE MONITORING_OUTGOING
+          SET ${outgoingColumn} = :newName, UPDATED_AT = SYSTIMESTAMP
+        WHERE UPPER(${outgoingColumn}) = UPPER(:oldName)`,
+      { oldName, newName: name },
+      { autoCommit: false },
+    );
+    await connection.commit();
+    return await findDepartmentById(connection, id);
+  } catch (err) {
+    try {
+      await connection.rollback();
+    } catch {
+      /* ignore */
+    }
+    throw err;
+  } finally {
+    await connection.close();
+  }
+}
+
+async function deleteDepartment(id) {
+  const pool = getPool();
+  const connection = await pool.getConnection();
+  try {
+    const current = await findDepartmentById(connection, id);
+    if (!current) {
+      const err = new Error("Department not found");
+      err.status = 404;
+      throw err;
+    }
+    const result = await connection.execute(
+      `UPDATE ${TABLE} SET IS_DELETED = 1, UPDATED_AT = SYSTIMESTAMP WHERE ID = :id`,
+      { id },
+      { autoCommit: true },
+    );
+    if (result.rowsAffected === 0) {
+      const err = new Error("Department not found");
+      err.status = 404;
+      throw err;
+    }
+  } finally {
+    await connection.close();
+  }
+}
+
+export { createDepartment, deleteDepartment, listDepartments, seedBuiltinDepartments, updateDepartment };

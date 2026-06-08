@@ -15,17 +15,17 @@ import {
 const POLICY_STATUSES = ["Pending", "In Progress", "Completed", "On Hold", "Cancelled"];
 const POLICY_FILTERS = ["All", ...POLICY_STATUSES];
 const MAX_POLICY_TRANSACTION_CODE = 20;
-const POLICY_TRANSACTION_CODE_ALLOWED = /[^A-Za-z0-9-]/g;
-const POLICY_TRANSACTION_CODE_DISALLOWED = /[^A-Za-z0-9-]/;
+const POLICY_TRANSACTION_CODE_ALLOWED = /[^A-Za-z0-9- ]/g;
+const POLICY_TRANSACTION_CODE_DISALLOWED = /[^A-Za-z0-9- ]/;
 const blankTransactionCodeWarning = { invalidChars: false, maxLength: false };
 const MAX_POLICY_TITLE = 175;
 const MAX_POLICY_CREATED_BY = 30;
-const POLICY_CREATED_BY_ALLOWED = /[^A-Za-z-]/g;
-const POLICY_CREATED_BY_DISALLOWED = /[^A-Za-z-]/;
+const POLICY_CREATED_BY_ALLOWED = /[^A-Za-z- ]/g;
+const POLICY_CREATED_BY_DISALLOWED = /[^A-Za-z- ]/;
 const blankCreatedByWarning = { invalidChars: false, maxLength: false };
 const MAX_POLICY_ASSIGNED_TO = 20;
-const POLICY_ASSIGNED_TO_ALLOWED = /[^A-Za-z0-9-]/g;
-const POLICY_ASSIGNED_TO_DISALLOWED = /[^A-Za-z0-9-]/;
+const POLICY_ASSIGNED_TO_ALLOWED = /[^A-Za-z0-9- ]/g;
+const POLICY_ASSIGNED_TO_DISALLOWED = /[^A-Za-z0-9- ]/;
 const blankAssignedToWarning = { invalidChars: false, maxLength: false };
 const MAX_POLICY_REMARKS = 500;
 
@@ -211,12 +211,12 @@ export default function PolicyMonitoringView({ setModal, setConfirmModal, showRe
   };
 
   const validatePolicy = (body) => {
-    if (!body.transactionCode) return "Transaction code is required.";
+    if (!body.transactionCode) return "Policy code is required.";
     if (POLICY_TRANSACTION_CODE_DISALLOWED.test(body.transactionCode)) {
-      return "Transaction code may only contain letters, numbers, and dashes.";
+      return "Policy code may only contain letters, numbers, dashes, and spaces.";
     }
     if (body.transactionCode.length > MAX_POLICY_TRANSACTION_CODE) {
-      return `Transaction code must be at most ${MAX_POLICY_TRANSACTION_CODE} characters.`;
+      return `Policy code must be at most ${MAX_POLICY_TRANSACTION_CODE} characters.`;
     }
     if (!body.policyTitle) return "Policy title is required.";
     if (body.policyTitle.length > MAX_POLICY_TITLE) {
@@ -224,14 +224,14 @@ export default function PolicyMonitoringView({ setModal, setConfirmModal, showRe
     }
     if (!body.createdBy) return "Created by is required.";
     if (POLICY_CREATED_BY_DISALLOWED.test(body.createdBy)) {
-      return "Created by may only contain letters and dashes.";
+      return "Created by may only contain letters, dashes, and spaces.";
     }
     if (body.createdBy.length > MAX_POLICY_CREATED_BY) {
       return `Created by must be at most ${MAX_POLICY_CREATED_BY} characters.`;
     }
     if (!body.assignedTo) return "Assigned to is required.";
     if (POLICY_ASSIGNED_TO_DISALLOWED.test(body.assignedTo)) {
-      return "Assigned to may only contain letters, numbers, and dashes.";
+      return "Assigned to may only contain letters, numbers, dashes, and spaces.";
     }
     if (body.assignedTo.length > MAX_POLICY_ASSIGNED_TO) {
       return `Assigned to must be at most ${MAX_POLICY_ASSIGNED_TO} characters.`;
@@ -359,7 +359,7 @@ export default function PolicyMonitoringView({ setModal, setConfirmModal, showRe
   const policyExport = () =>
     exportCsv("policy-monitoring.csv", [
       [
-        "Transaction Code",
+        "Policy Code",
         "Policy Title",
         "Created By",
         "Assigned To",
@@ -449,7 +449,7 @@ export default function PolicyMonitoringView({ setModal, setConfirmModal, showRe
     <>
       <div className="form-row">
         <label>
-          <span>Transaction Code *</span>
+          <span>Policy Code *</span>
           <input
             type="text"
             autoComplete="off"
@@ -475,7 +475,7 @@ export default function PolicyMonitoringView({ setModal, setConfirmModal, showRe
             <PolicyRequiredWarning show={requiredWarnings.transactionCode} />
             {!requiredWarnings.transactionCode && (txWarning.invalidChars || txWarning.maxLength) ? (
               <p className="form-field-warning" role="alert">
-                {txWarning.invalidChars ? "Only letters, numbers, and dashes are allowed. " : null}
+                {txWarning.invalidChars ? "Only letters, numbers, dashes, and spaces are allowed. " : null}
                 {txWarning.maxLength ? `At most ${MAX_POLICY_TRANSACTION_CODE} characters are allowed.` : null}
               </p>
             ) : null}
@@ -543,7 +543,7 @@ export default function PolicyMonitoringView({ setModal, setConfirmModal, showRe
             <PolicyRequiredWarning show={requiredWarnings.createdBy} />
             {!requiredWarnings.createdBy && (createdByWarning.invalidChars || createdByWarning.maxLength) ? (
               <p className="form-field-warning" role="alert">
-                {createdByWarning.invalidChars ? "Only letters and dashes are allowed. " : null}
+                {createdByWarning.invalidChars ? "Only letters, dashes, and spaces are allowed. " : null}
                 {createdByWarning.maxLength ? `At most ${MAX_POLICY_CREATED_BY} characters are allowed.` : null}
               </p>
             ) : null}
@@ -577,7 +577,7 @@ export default function PolicyMonitoringView({ setModal, setConfirmModal, showRe
             <PolicyRequiredWarning show={requiredWarnings.assignedTo} />
             {!requiredWarnings.assignedTo && (assignedToWarning.invalidChars || assignedToWarning.maxLength) ? (
               <p className="form-field-warning" role="alert">
-                {assignedToWarning.invalidChars ? "Only letters, numbers, and dashes are allowed. " : null}
+                {assignedToWarning.invalidChars ? "Only letters, numbers, dashes, and spaces are allowed. " : null}
                 {assignedToWarning.maxLength ? `At most ${MAX_POLICY_ASSIGNED_TO} characters are allowed.` : null}
               </p>
             ) : null}
@@ -752,7 +752,7 @@ export default function PolicyMonitoringView({ setModal, setConfirmModal, showRe
             <table>
               <thead>
                 <tr>
-                  <th>Transaction Code</th>
+                  <th>Policy Code</th>
                   <th>Policy Title</th>
                   <th>Created By</th>
                   <th>Assigned To</th>
