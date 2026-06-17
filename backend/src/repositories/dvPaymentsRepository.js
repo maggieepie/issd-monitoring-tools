@@ -29,13 +29,18 @@ function mapRow(row) {
     ictssd: String(row.ICTSSD ?? row.ictssd ?? "Pending"),
     gad: String(row.GAD ?? row.gad ?? "Pending"),
     cash: String(row.CASH ?? row.cash ?? "Received"),
+    ictssdPendingSince: formatTimestampCell(row.ICTSSD_PENDING_SINCE ?? row.ictssd_pending_since),
+    gadPendingSince: formatTimestampCell(row.GAD_PENDING_SINCE ?? row.gad_pending_since),
+    cashPendingSince: formatTimestampCell(row.CASH_PENDING_SINCE ?? row.cash_pending_since),
     createdAt: formatTimestampCell(row.CREATED_AT ?? row.created_at),
     updatedAt: formatTimestampCell(row.UPDATED_AT ?? row.updated_at),
   };
 }
 
 const SELECT_COLS = `ID, TITLE, CLAIMANT_ADDRESS, VOUCHER_NO, VOUCHER_DATE,
-                     AMOUNT, ICTSSD, GAD, CASH, CREATED_AT, UPDATED_AT`;
+                     AMOUNT, ICTSSD, GAD, CASH,
+                     ICTSSD_PENDING_SINCE, GAD_PENDING_SINCE, CASH_PENDING_SINCE,
+                     CREATED_AT, UPDATED_AT`;
 
 async function selectDvRow(connection, id) {
   const result = await connection.execute(
@@ -68,9 +73,15 @@ async function createDvPayment(payload) {
   try {
     await connection.execute(
       `INSERT INTO ${TABLE}
-         (ID, TITLE, CLAIMANT_ADDRESS, VOUCHER_NO, VOUCHER_DATE, AMOUNT, ICTSSD, GAD, CASH)
+         (ID, TITLE, CLAIMANT_ADDRESS, VOUCHER_NO, VOUCHER_DATE, AMOUNT,
+          ICTSSD, GAD, CASH,
+          ICTSSD_PENDING_SINCE, GAD_PENDING_SINCE, CASH_PENDING_SINCE)
        VALUES
-         (:id, :title, :addr, :vno, TO_DATE(:vdate, 'YYYY-MM-DD'), :amt, :ictssd, :gad, :cash)`,
+         (:id, :title, :addr, :vno, TO_DATE(:vdate, 'YYYY-MM-DD'), :amt,
+          :ictssd, :gad, :cash,
+          CASE WHEN :ictssd = 'Pending' THEN SYSTIMESTAMP ELSE NULL END,
+          CASE WHEN :gad = 'Pending' THEN SYSTIMESTAMP ELSE NULL END,
+          CASE WHEN :cash = 'Pending' THEN SYSTIMESTAMP ELSE NULL END)`,
       {
         id,
         title: payload.title,
@@ -104,6 +115,21 @@ async function updateDvPayment(id, payload) {
               ICTSSD           = :ictssd,
               GAD              = :gad,
               CASH             = :cash,
+              ICTSSD_PENDING_SINCE = CASE
+                WHEN :ictssd = 'Pending' AND ICTSSD = 'Pending' THEN NVL(ICTSSD_PENDING_SINCE, SYSTIMESTAMP)
+                WHEN :ictssd = 'Pending' THEN SYSTIMESTAMP
+                ELSE NULL
+              END,
+              GAD_PENDING_SINCE = CASE
+                WHEN :gad = 'Pending' AND GAD = 'Pending' THEN NVL(GAD_PENDING_SINCE, SYSTIMESTAMP)
+                WHEN :gad = 'Pending' THEN SYSTIMESTAMP
+                ELSE NULL
+              END,
+              CASH_PENDING_SINCE = CASE
+                WHEN :cash = 'Pending' AND CASH = 'Pending' THEN NVL(CASH_PENDING_SINCE, SYSTIMESTAMP)
+                WHEN :cash = 'Pending' THEN SYSTIMESTAMP
+                ELSE NULL
+              END,
               UPDATED_AT       = SYSTIMESTAMP
         WHERE ID = :id`,
       {

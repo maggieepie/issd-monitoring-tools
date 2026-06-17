@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 
+import AttachmentField, { AttachmentDetailPreview } from "./AttachmentField.jsx";
 import PolicyMonitoringView from "./PolicyMonitoringView.jsx";
 import RequiredFieldsAlertModal from "./RequiredFieldsAlertModal.jsx";
-import { REQUIRED_FIELDS_ALERT_MESSAGE } from "./monitoringShared.js";
+import { applyAttachmentMeta, blankAttachmentDraft, normalizeAttachments, syncRecordAttachments } from "./attachmentApi.js";
+import { REQUIRED_FIELDS_ALERT_MESSAGE, formatPendingElapsed } from "./monitoringShared.js";
 
 const peso = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP", minimumFractionDigits: 2 });
 const number = new Intl.NumberFormat("en-PH");
@@ -125,7 +127,7 @@ function mergeGoodsOptions(extraGoods, projects, hiddenPickerGoods) {
   for (const p of projects) push(p.goods);
   return out;
 }
-const ICTSSD = ["Pending", "Signed", "Unsigned", "Return"];
+const ITMG = ["Pending", "Signed", "Unsigned", "Return"];
 const GAD = ["Pending", "Signed", "Unsigned", "Return"];
 const CASH = ["Pending", "Signed", "Unsigned", "Return"];
 const PAYMENT_FILTERS = ["All", "Signed", "Receive", "Received", "Pending", "Unsigned", "Return"];
@@ -322,7 +324,7 @@ const FAQ_ITEMS = [
   {
     id: "dv-monitoring",
     title: "Disbursement Voucher Monitoring",
-    description: "Monitor voucher records, claimant information, and department-level status updates across ICTSSD, GAD, and CASH. This improves visibility and tracking of DV processing stages.",
+    description: "Monitor voucher records, claimant information, and department-level status updates across ITMG, GAD, and CASH. This improves visibility and tracking of DV processing stages.",
   },
   {
     id: "outgoing-monitoring",
@@ -428,6 +430,60 @@ function projectMoneyDisplayToNumber(display) {
   if (!s || s === ".") return 0;
   const n = Number(s);
   return Number.isFinite(n) ? n : 0;
+}
+
+function toMoneyNumber(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  return projectMoneyDisplayToNumber(value);
+}
+
+function normalizeProjectRow(row) {
+  return normalizeAttachments({
+    ...row,
+    amount: toMoneyNumber(row?.amount),
+    outstanding: toMoneyNumber(row?.outstanding),
+  });
+}
+
+function normalizePaymentRow(row) {
+  return normalizeAttachments({
+    ...row,
+    amount: toMoneyNumber(row?.amount),
+  });
+}
+
+function normalizeOutgoingRow(row) {
+  return normalizeAttachments(row);
+}
+
+async function attachAfterSave(module, recordId, draft) {
+  if (!draft?.newFiles?.length && !draft?.removedAttachmentIds?.length) return null;
+  return syncRecordAttachments(module, recordId, {
+    newFiles: draft.newFiles || [],
+    removedAttachmentIds: draft.removedAttachmentIds || [],
+  });
+}
+
+function projectAmount(project) {
+  return toMoneyNumber(project?.amount);
+}
+
+function projectOutstandingRaw(project) {
+  return toMoneyNumber(project?.outstanding);
+}
+
+/** Caps outstanding at contract amount so one bad record cannot break analytics. */
+function projectOutstandingCapped(project) {
+  const amount = projectAmount(project);
+  const outstanding = projectOutstandingRaw(project);
+  if (amount <= 0) return 0;
+  return Math.min(Math.max(0, outstanding), amount);
+}
+
+function projectHasInvalidOutstanding(project) {
+  const amount = projectAmount(project);
+  const outstanding = projectOutstandingRaw(project);
+  return amount > 0 && outstanding > amount;
 }
 
 function projectMoneyExceedsOracleMax(display) {
@@ -609,6 +665,7 @@ function App() {
   const [paymentsLoading, setPaymentsLoading] = useState(false);
   const [paymentLoadError, setPaymentLoadError] = useState("");
   const [paymentSaveError, setPaymentSaveError] = useState("");
+  const [paymentStatusNow, setPaymentStatusNow] = useState(() => Date.now());
   const [outgoingLoading, setOutgoingLoading] = useState(false);
   const [outgoingLoadError, setOutgoingLoadError] = useState("");
   const [outgoingSaveError, setOutgoingSaveError] = useState("");
@@ -634,6 +691,12 @@ function App() {
   const [paymentRequiredWarnings, setPaymentRequiredWarnings] = useState(blankPaymentRequiredWarnings);
   const [projectRequiredWarnings, setProjectRequiredWarnings] = useState(blankProjectRequiredWarnings);
   const [projectSaving, setProjectSaving] = useState(false);
+  const [projectAttachmentDraft, setProjectAttachmentDraft] = useState(blankAttachmentDraft);
+  const [editAttachmentDraft, setEditAttachmentDraft] = useState(blankAttachmentDraft);
+  const [paymentAttachmentDraft, setPaymentAttachmentDraft] = useState(blankAttachmentDraft);
+  const [paymentEditAttachmentDraft, setPaymentEditAttachmentDraft] = useState(blankAttachmentDraft);
+  const [outgoingAttachmentDraft, setOutgoingAttachmentDraft] = useState(blankAttachmentDraft);
+  const [outgoingEditAttachmentDraft, setOutgoingEditAttachmentDraft] = useState(blankAttachmentDraft);
   const [reportExport, setReportExport] = useState("summary");
   const [modal, setModal] = useState(null);
   const [confirmModal, setConfirmModal] = useState(null);
@@ -657,6 +720,7 @@ function App() {
     setGoodsRenameError("");
     setGoodsSelectError("");
     setProjectSaveError("");
+    setEditAttachmentDraft(blankAttachmentDraft);
   };
   const closePaymentEditModal = () => {
     setPaymentEditModal(false);
@@ -667,6 +731,7 @@ function App() {
     setDvVoucherWarning({ maxLength: false });
     setDvAmountWarning({ invalidChars: false, maxDigits: false });
     setPaymentSaveError("");
+    setPaymentEditAttachmentDraft(blankAttachmentDraft);
   };
   const closeOutgoingEditModal = () => {
     setOutgoingEditModal(false);
@@ -684,6 +749,7 @@ function App() {
     setDeptManageRenameDraft("");
     setDeptManageError("");
     setOutgoingSaveError("");
+    setOutgoingEditAttachmentDraft(blankAttachmentDraft);
   };
   const currentViewMeta = VIEW_META[view];
 
@@ -801,7 +867,7 @@ function App() {
         if (!res.ok) {
           throw new Error((data && data.message) || raw || "Save failed");
         }
-        replacements.set(p.id, data);
+        replacements.set(p.id, normalizeProjectRow(data));
       }
       setProjects((cur) => cur.map((x) => replacements.get(x.id) ?? x));
       setExtraGoods((prev) => {
@@ -865,9 +931,9 @@ function App() {
   };
 
   const stats = useMemo(() => {
-    const totalContractValue = projects.reduce((s, x) => s + x.amount, 0);
-    const totalOutstandingValue = projects.reduce((s, x) => s + x.outstanding, 0);
-    const totalVoucherValue = payments.reduce((s, x) => s + x.amount, 0);
+    const totalContractValue = projects.reduce((s, x) => s + projectAmount(x), 0);
+    const totalOutstandingValue = projects.reduce((s, x) => s + projectOutstandingCapped(x), 0);
+    const totalVoucherValue = payments.reduce((s, x) => s + toMoneyNumber(x.amount), 0);
     const pendingPayments = payments.filter((x) => x.ictssd === "Pending" || x.gad === "Pending" || x.gad === "Unsigned" || x.gad === "Return" || x.cash === "Return").length;
     return {
       totalProjects: projects.length,
@@ -877,7 +943,8 @@ function App() {
       totalVoucherValue,
       pendingPayments,
       totalOutgoing: outgoing.length,
-      pendingProjects: projects.filter((x) => x.outstanding > 0).length,
+      pendingProjects: projects.filter((x) => projectOutstandingRaw(x) > 0).length,
+      invalidOutstandingProjects: projects.filter(projectHasInvalidOutstanding).length,
     };
   }, [projects, payments, outgoing]);
 
@@ -922,14 +989,19 @@ function App() {
   );
 
   const projectValueSeries = useMemo(
-    () => projects.map((item) => ({ label: compactLabel(item.contractName), fullLabel: item.contractName, value: item.amount })),
+    () => projects.map((item) => ({ label: compactLabel(item.contractName), fullLabel: item.contractName, value: projectAmount(item) })),
     [projects],
   );
   const projectOutstandingSeries = useMemo(
-    () => projects.map((item) => ({ label: compactLabel(item.contractName), fullLabel: item.contractName, value: item.outstanding })),
+    () => projects.map((item) => ({ label: compactLabel(item.contractName), fullLabel: item.contractName, value: projectOutstandingCapped(item) })),
     [projects],
   );
-  const outstandingPercent = stats.totalContractValue ? Math.round((stats.totalOutstandingValue / stats.totalContractValue) * 100) : 0;
+  const outstandingRatio = stats.totalContractValue
+    ? stats.totalOutstandingValue / stats.totalContractValue
+    : 0;
+  const outstandingPercent = Number.isFinite(outstandingRatio)
+    ? Math.min(100, Math.round(outstandingRatio * 100))
+    : 0;
 
   const dvStatusCharts = useMemo(() => {
     const collect = (key) => Object.entries(
@@ -970,8 +1042,8 @@ function App() {
       recordType: "Project",
       title: item.contractName,
       date: item.date,
-      status: item.outstanding > 0 ? "Outstanding" : "Cleared",
-      amount: item.amount,
+      status: toMoneyNumber(item.outstanding) > 0 ? "Outstanding" : "Cleared",
+      amount: toMoneyNumber(item.amount),
     }));
     const paymentItems = payments.map((item) => ({
       id: `payment-${item.id}`,
@@ -979,7 +1051,7 @@ function App() {
       title: item.voucherNo,
       date: item.date || "",
       status: `${item.ictssd} / ${item.gad} / ${item.cash}`,
-      amount: item.amount,
+      amount: toMoneyNumber(item.amount),
     }));
     const outgoingItems = outgoing.map((item) => ({
       id: `outgoing-${item.id}`,
@@ -1011,7 +1083,7 @@ function App() {
         if (!res.ok) {
           throw new Error((data && data.message) || raw || "Failed to load projects");
         }
-        if (!cancelled) setProjects(Array.isArray(data) ? data : []);
+        if (!cancelled) setProjects(Array.isArray(data) ? data.map(normalizeProjectRow) : []);
       } catch (e) {
         if (!cancelled) {
           setProjectLoadError(e instanceof Error ? e.message : String(e));
@@ -1038,7 +1110,7 @@ function App() {
         let data;
         try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
         if (!res.ok) throw new Error((data && data.message) || raw || "Failed to load DV payments");
-        if (!cancelled) setPayments(Array.isArray(data) ? data : []);
+        if (!cancelled) setPayments(Array.isArray(data) ? data.map(normalizePaymentRow) : []);
       } catch (e) {
         if (!cancelled) { setPaymentLoadError(e instanceof Error ? e.message : String(e)); setPayments([]); }
       } finally {
@@ -1047,6 +1119,13 @@ function App() {
     })();
     return () => { cancelled = true; };
   }, [started]);
+
+  useEffect(() => {
+    if (view !== "payments") return undefined;
+    setPaymentStatusNow(Date.now());
+    const timer = setInterval(() => setPaymentStatusNow(Date.now()), 30000);
+    return () => clearInterval(timer);
+  }, [view]);
 
   useEffect(() => {
     if (!started) return undefined;
@@ -1060,7 +1139,7 @@ function App() {
         let data;
         try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
         if (!res.ok) throw new Error((data && data.message) || raw || "Failed to load outgoing records");
-        if (!cancelled) setOutgoing(Array.isArray(data) ? data : []);
+        if (!cancelled) setOutgoing(Array.isArray(data) ? data.map(normalizeOutgoingRow) : []);
       } catch (e) {
         if (!cancelled) {
           setOutgoingLoadError(e instanceof Error ? e.message : String(e));
@@ -1183,6 +1262,10 @@ function App() {
     }
     const amount = projectMoneyDisplayToNumber(src.amount);
     const outstanding = projectMoneyDisplayToNumber(src.outstanding);
+    if (outstanding > amount) {
+      setProjectSaveError("Outstanding value cannot exceed the contract amount.");
+      return;
+    }
     setProjectSaving(true);
     const body = {
       contractName: src.contractName.trim().slice(0, MAX_PROJECT_CONTRACT_NAME_LENGTH),
@@ -1210,9 +1293,19 @@ function App() {
       if (!res.ok) {
         throw new Error((data && data.message) || raw || "Save failed");
       }
-      const saved = data;
+      let saved = normalizeProjectRow(data);
+      const draft = isEdit ? editAttachmentDraft : projectAttachmentDraft;
+      const prior = isEdit ? projects.find((p) => p.id === projectEdit) : null;
+      try {
+        const attachmentResult = await attachAfterSave("projects", saved.id, draft);
+        saved = applyAttachmentMeta(saved, attachmentResult, draft);
+      } catch (attachErr) {
+        setProjectSaveError(`Record saved but attachment failed: ${attachErr instanceof Error ? attachErr.message : String(attachErr)}`);
+      }
       setProjects((cur) => (projectEdit != null ? cur.map((x) => (x.id === projectEdit ? saved : x)) : [saved, ...cur]));
       setProjectForm(blankProject);
+      setProjectAttachmentDraft(blankAttachmentDraft);
+      setEditAttachmentDraft(blankAttachmentDraft);
       setProjectMoneyWarnings(blankProjectMoneyWarnings);
       setProjectRequiredWarnings(blankProjectRequiredWarnings);
       setGoodsAddVisible(false);
@@ -1270,9 +1363,16 @@ function App() {
       let data;
       try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
       if (!res.ok) throw new Error((data && data.message) || raw || "Save failed");
-      const saved = data;
+      let saved = normalizePaymentRow(data);
+      try {
+        const attachmentResult = await attachAfterSave("dv-payments", saved.id, paymentAttachmentDraft);
+        saved = applyAttachmentMeta(saved, attachmentResult, paymentAttachmentDraft);
+      } catch (attachErr) {
+        setPaymentSaveError(`Record saved but attachment failed: ${attachErr instanceof Error ? attachErr.message : String(attachErr)}`);
+      }
       setPayments((cur) => [saved, ...cur]);
       setPaymentForm(blankPayment);
+      setPaymentAttachmentDraft(blankAttachmentDraft);
       setDvTitleWarning(false);
       setDvClaimantWarning(false);
       setDvVoucherWarning({ maxLength: false });
@@ -1305,8 +1405,16 @@ function App() {
       let data;
       try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
       if (!res.ok) throw new Error((data && data.message) || raw || "Save failed");
-      const saved = data;
+      let saved = normalizePaymentRow(data);
+      const prior = payments.find((x) => x.id === paymentEdit);
+      try {
+        const attachmentResult = await attachAfterSave("dv-payments", saved.id, paymentEditAttachmentDraft);
+        saved = applyAttachmentMeta(saved, attachmentResult, paymentEditAttachmentDraft);
+      } catch (attachErr) {
+        setPaymentSaveError(`Record saved but attachment failed: ${attachErr instanceof Error ? attachErr.message : String(attachErr)}`);
+      }
       setPayments((cur) => cur.map((x) => (x.id === paymentEdit ? saved : x)));
+      setPaymentEditAttachmentDraft(blankAttachmentDraft);
       closePaymentEditModal();
     } catch (err) {
       setPaymentSaveError(err instanceof Error ? err.message : String(err));
@@ -1360,9 +1468,16 @@ function App() {
       let data;
       try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
       if (!res.ok) throw new Error((data && data.message) || raw || "Save failed");
-      const saved = data;
+      let saved = normalizeOutgoingRow(data);
+      try {
+        const attachmentResult = await attachAfterSave("outgoing", saved.id, outgoingAttachmentDraft);
+        saved = applyAttachmentMeta(saved, attachmentResult, outgoingAttachmentDraft);
+      } catch (attachErr) {
+        setOutgoingSaveError(`Record saved but attachment failed: ${attachErr instanceof Error ? attachErr.message : String(attachErr)}`);
+      }
       setOutgoing((cur) => [saved, ...cur]);
       setOutgoingForm(blankOutgoing);
+      setOutgoingAttachmentDraft(blankAttachmentDraft);
       setOutgoingSubjectWarning(false);
       setOutgoingMemoNoWarning({ invalidChars: false, maxLength: false });
       setOutgoingRequiredWarnings(blankOutgoingRequiredWarnings);
@@ -1421,8 +1536,16 @@ function App() {
       let data;
       try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
       if (!res.ok) throw new Error((data && data.message) || raw || "Save failed");
-      const saved = data;
+      let saved = normalizeOutgoingRow(data);
+      const prior = outgoing.find((x) => x.id === outgoingEdit);
+      try {
+        const attachmentResult = await attachAfterSave("outgoing", saved.id, outgoingEditAttachmentDraft);
+        saved = applyAttachmentMeta(saved, attachmentResult, outgoingEditAttachmentDraft);
+      } catch (attachErr) {
+        setOutgoingSaveError(`Record saved but attachment failed: ${attachErr instanceof Error ? attachErr.message : String(attachErr)}`);
+      }
       setOutgoing((cur) => cur.map((x) => (x.id === outgoingEdit ? saved : x)));
+      setOutgoingEditAttachmentDraft(blankAttachmentDraft);
       closeOutgoingEditModal();
     } catch (err) {
       setOutgoingSaveError(err instanceof Error ? err.message : String(err));
@@ -1450,14 +1573,14 @@ function App() {
       </div>
     </div>
   );
-  const open = (type, title, rows) => setModal({ type, title, rows });
+  const open = (type, title, rows, meta = {}) => setModal({ type, title, rows, ...meta });
   const openLandingPanel = (key) => {
     setLandingModal(LANDING_PANELS[key]);
     setActiveFaq(key === "faqs" ? FAQ_ITEMS[0].id : "");
   };
 
   const projectExport = () => exportCsv("project-monitoring.csv", [["Name of Contract", "Start Date", "End Date", "Duration", "Kind of Goods", "Amount of Contract", "Outstanding Value"], ...projectRows.map((x) => [x.contractName, x.date, projectComputedEndDateYmd(x.date, x.duration) || "", x.duration, x.goods, x.amount, x.outstanding])]);
-  const paymentExport = () => exportCsv("dv-payment-monitoring.csv", [["Title of the Project", "Name and Address of Claimant", "Voucher No.", "Date", "Amount", "ICTSSD", "GAD", "CASH"], ...paymentRows.map((x) => [x.title, x.claimantAddress, x.voucherNo, x.date || "", x.amount, x.ictssd, x.gad, x.cash])]);
+  const paymentExport = () => exportCsv("dv-payment-monitoring.csv", [["Title of the Project", "Name and Address of Claimant", "Voucher No.", "Date", "Amount", "ITMG", "GAD", "CASH"], ...paymentRows.map((x) => [x.title, x.claimantAddress, x.voucherNo, x.date || "", x.amount, x.ictssd, x.gad, x.cash])]);
   const outgoingExport = () => exportCsv("issd-outgoing-monitoring.csv", [["Subject", "Memo Number", "Date", "Thru", "For"], ...outgoingRows.map((x) => [x.subject, x.memoNo, x.date, x.thru, x.forDept])]);
 
   const closeDeptManageModal = () => {
@@ -2187,6 +2310,12 @@ function App() {
           </div>
         </label>
       </div>
+      <AttachmentField
+        module="projects"
+        draft={projectAttachmentDraft}
+        onDraftChange={setProjectAttachmentDraft}
+        disabled={projectSaving}
+      />
       <div className="form-actions">
         <button type="submit" className="primary-button" disabled={projectSaving}>
           {projectSaving ? "Saving…" : "Add project"}
@@ -2207,6 +2336,7 @@ function App() {
             setGoodsRenameError("");
             setGoodsSelectError("");
             setProjectSaveError("");
+            setProjectAttachmentDraft(blankAttachmentDraft);
           }}
         >
           Clear form
@@ -2300,6 +2430,12 @@ function App() {
         </label>
       </div>
       {outgoingDeptPickers}
+      <AttachmentField
+        module="outgoing"
+        draft={outgoingAttachmentDraft}
+        onDraftChange={setOutgoingAttachmentDraft}
+        disabled={outgoingSaving}
+      />
       <div className="form-actions">
         <button type="submit" className="primary-button" disabled={outgoingSaving}>
           {outgoingSaving ? "Adding…" : "Add outgoing"}
@@ -2313,6 +2449,7 @@ function App() {
             setOutgoingSubjectWarning(false);
             setOutgoingMemoNoWarning({ invalidChars: false, maxLength: false });
             setOutgoingRequiredWarnings(blankOutgoingRequiredWarnings);
+            setOutgoingAttachmentDraft(blankAttachmentDraft);
             setThruAddVisible(false);
             setThruAddDraft("");
             setThruAddError("");
@@ -2473,9 +2610,9 @@ function App() {
       </div>
       <div className="form-row form-row--triple">
         <label>
-          <span>ICTSSD (Department) *</span>
+          <span>ITMG (Department) *</span>
           <select value={paymentForm.ictssd} onChange={(e) => setPaymentForm({ ...paymentForm, ictssd: e.target.value })}>
-            {ICTSSD.map((o) => (
+            {ITMG.map((o) => (
               <option key={o}>{o}</option>
             ))}
           </select>
@@ -2500,6 +2637,11 @@ function App() {
           <div className="form-field-warning-slot" />
         </label>
       </div>
+      <AttachmentField
+        module="dv-payments"
+        draft={paymentAttachmentDraft}
+        onDraftChange={setPaymentAttachmentDraft}
+      />
       <div className="form-actions">
         <button type="submit" className="primary-button">
           Add DV record
@@ -2515,6 +2657,7 @@ function App() {
             setDvVoucherWarning({ maxLength: false });
             setDvAmountWarning({ invalidChars: false, maxDigits: false });
             setPaymentRequiredWarnings(blankPaymentRequiredWarnings);
+            setPaymentAttachmentDraft(blankAttachmentDraft);
           }}
         >
           Clear form
@@ -2737,8 +2880,8 @@ function App() {
                 {projectSaveError ? <div>{projectSaveError}</div> : null}
               </div>
             )}
-            <section className="panel metric-panel"><div className="metric-section"><div className="inline-stat-grid"><MetricChip label="Total of contracts" value={number.format(projects.length)} /><MetricChip label="Total of contract value" value={peso.format(stats.totalContractValue)} /><MetricChip label="Total of outstanding" value={peso.format(stats.totalOutstandingValue)} /></div></div></section><section className="panel form-panel"><div className="panel__header"><div><p className="panel__kicker">Project Monitoring Tool</p><h3>Add new project</h3></div></div>{projectAddRecordForm}</section><section className="panel table-panel">{toolbar("Project records", "Search, filter, and export contract monitoring data.", projectSearch, setProjectSearch, projectFilter, setProjectFilter, goodsFilterOptions, "Goods", projectExport)}<div className="table-wrap table-wrap--projects"><table><thead><tr><th>Name of Contract</th><th>Start Date</th><th>End Date</th><th>Duration</th><th>Kind of Goods</th><th>Amount of Contract</th><th>Outstanding Value</th><th>Actions</th></tr></thead><tbody>{projectsLoading ? <tr><td colSpan={8}>Loading projects…</td></tr> : pageSlice(projectRows, safeProjectPage).map((x) => <tr key={x.id}><td>{x.contractName}</td><td>{fmtDate(x.date)}</td><td>{formatProjectEndDateLabel(x.date, x.duration)}</td><td>{x.duration}</td><td>{x.goods}</td><td>{peso.format(x.amount)}</td><td>{peso.format(x.outstanding)}</td><td><ActionSet onView={() => open("Project", x.contractName, [["Start Date", fmtDate(x.date)], ["End Date", formatProjectEndDateLabel(x.date, x.duration)], ["Duration", x.duration], ["Kind of Goods", x.goods], ["Amount of Contract", peso.format(x.amount)], ["Outstanding Value", peso.format(x.outstanding)]])} onEdit={() => { setProjectEdit(x.id); const cn = String(x.contractName ?? ""); setEditMoneyWarnings({ ...blankProjectMoneyWarnings, contractName: { maxLength: false } }); setGoodsAddVisible(false); setGoodsAddDraft(""); setGoodsAddError(""); setGoodsRenameVisible(false); setGoodsRenameDraft(""); setGoodsRenameError(""); setGoodsSelectError(""); setEditForm({ contractName: cn.slice(0, MAX_PROJECT_CONTRACT_NAME_LENGTH), date: x.date, duration: String(x.duration ?? "").slice(0, MAX_PROJECT_DURATION_LENGTH), goods: x.goods, amount: projectMoneyFromNumber(x.amount), outstanding: projectMoneyFromNumber(x.outstanding) }); setEditModal(true); }} onDelete={() => void deleteProjectRow(x.id, x.contractName)} /></td></tr>)}</tbody></table></div>{pager(safeProjectPage, projectPages, projectRows.length, setProjectPage)}</section></div></section>)}
-        {view === "payments" && <section className="page tool-page"><div className="tool-layout">{(paymentLoadError || (paymentSaveError && !paymentEditModal)) && <div role="alert" style={{background:"#fee2e2",color:"#991b1b",padding:"14px 18px",borderRadius:"14px",fontSize:".93rem"}}>{paymentLoadError || paymentSaveError}</div>}<section className="panel metric-panel"><div className="metric-section"><div className="inline-stat-grid"><MetricChip label="Total DV" value={number.format(payments.length)} /><MetricChip label="Total amount" value={peso.format(stats.totalVoucherValue)} /><MetricChip label="Status alerts" value={number.format(stats.pendingPayments)} /></div></div></section><section className="panel form-panel"><div className="panel__header"><div><p className="panel__kicker">DV Payment Monitoring Tool</p><h3>Add new DV record</h3></div></div>{paymentAddRecordForm}</section><section className="panel table-panel">{toolbar("DV payment records", "Track voucher workflow progress with clear department status indicators.", paymentSearch, setPaymentSearch, paymentFilter, setPaymentFilter, PAYMENT_FILTERS, "Status", paymentExport)}<div className="table-wrap table-wrap--payments"><table><thead><tr><th>Title of the Project</th><th>Name and Address of Claimant</th><th>Voucher No.</th><th>Date</th><th>Amount</th><th>ICTSSD</th><th>GAD</th><th>CASH</th><th>Actions</th></tr></thead><tbody>{paymentsLoading ? <tr><td colSpan={9}>Loading DV payments…</td></tr> : pageSlice(paymentRows, safePaymentPage).map((x) => <tr key={x.id}><td>{x.title}</td><td>{x.claimantAddress}</td><td>{x.voucherNo}</td><td>{fmtDate(x.date)}</td><td>{peso.format(x.amount)}</td><td><StatusBadge label={x.ictssd} /></td><td><StatusBadge label={x.gad} /></td><td><StatusBadge label={x.cash} /></td><td><ActionSet onView={() => open("DV Payment", x.voucherNo, [["Title of the Project", x.title], ["Name and Address of Claimant", x.claimantAddress], ["Voucher No.", x.voucherNo], ["Date", fmtDate(x.date)], ["Amount", peso.format(x.amount)], ["ICTSSD", x.ictssd], ["GAD", x.gad], ["CASH", x.cash]])} onEdit={() => { setPaymentEdit(x.id); setPaymentEditForm({ title: x.title, claimantAddress: x.claimantAddress, voucherNo: x.voucherNo, amount: projectMoneyFromNumber(x.amount), date: x.date || "", ictssd: x.ictssd, gad: x.gad, cash: x.cash }); setPaymentSaveError(""); setDvTitleWarning(false); setDvClaimantWarning(false); setDvVoucherWarning({ nonNumeric: false, maxLength: false }); setDvAmountWarning({ invalidChars: false, maxDigits: false }); setPaymentEditModal(true); }} onDelete={async () => { await new Promise((resolve) => setConfirmModal({ title: x.voucherNo, onConfirm: resolve })); setConfirmModal(null); try { const res = await fetch(`/api/dv-payments/${x.id}`, { method: "DELETE" }); if (!res.ok && res.status !== 204) { const t = await res.text(); setPaymentSaveError(t || "Delete failed"); return; } setPayments((cur) => cur.filter((item) => item.id !== x.id)); } catch (err) { setPaymentSaveError(err instanceof Error ? err.message : String(err)); } }} /></td></tr>)}</tbody></table></div>{pager(safePaymentPage, paymentPages, paymentRows.length, setPaymentPage)}</section></div></section>}
+            <section className="panel metric-panel"><div className="metric-section"><div className="inline-stat-grid"><MetricChip label="Total of contracts" value={number.format(projects.length)} /><MetricChip label="Total of contract value" value={peso.format(stats.totalContractValue)} /><MetricChip label="Total of outstanding" value={peso.format(stats.totalOutstandingValue)} /></div></div></section><section className="panel form-panel"><div className="panel__header"><div><p className="panel__kicker">Project Monitoring Tool</p><h3>Add new project</h3></div></div>{projectAddRecordForm}</section><section className="panel table-panel">{toolbar("Project records", "Search, filter, and export contract monitoring data.", projectSearch, setProjectSearch, projectFilter, setProjectFilter, goodsFilterOptions, "Goods", projectExport)}<div className="table-wrap table-wrap--projects"><table><thead><tr><th>Name of Contract</th><th>Start Date</th><th>End Date</th><th>Duration</th><th>Kind of Goods</th><th>Amount of Contract</th><th>Outstanding Value</th><th>Actions</th></tr></thead><tbody>{projectsLoading ? <tr><td colSpan={8}>Loading projects…</td></tr> : pageSlice(projectRows, safeProjectPage).map((x) => <tr key={x.id}><td>{x.contractName}</td><td>{fmtDate(x.date)}</td><td>{formatProjectEndDateLabel(x.date, x.duration)}</td><td>{x.duration}</td><td>{x.goods}</td><td>{peso.format(x.amount)}</td><td>{peso.format(x.outstanding)}</td><td><ActionSet onView={() => open("Project", x.contractName, [["Start Date", fmtDate(x.date)], ["End Date", formatProjectEndDateLabel(x.date, x.duration)], ["Duration", x.duration], ["Kind of Goods", x.goods], ["Amount of Contract", peso.format(x.amount)], ["Outstanding Value", peso.format(x.outstanding)]], { recordId: x.id, attachmentModule: "projects", attachments: x.attachments || [] })} onEdit={() => { setProjectEdit(x.id); setEditAttachmentDraft(blankAttachmentDraft); const cn = String(x.contractName ?? ""); setEditMoneyWarnings({ ...blankProjectMoneyWarnings, contractName: { maxLength: false } }); setGoodsAddVisible(false); setGoodsAddDraft(""); setGoodsAddError(""); setGoodsRenameVisible(false); setGoodsRenameDraft(""); setGoodsRenameError(""); setGoodsSelectError(""); setEditForm({ contractName: cn.slice(0, MAX_PROJECT_CONTRACT_NAME_LENGTH), date: x.date, duration: String(x.duration ?? "").slice(0, MAX_PROJECT_DURATION_LENGTH), goods: x.goods, amount: projectMoneyFromNumber(x.amount), outstanding: projectMoneyFromNumber(x.outstanding) }); setEditModal(true); }} onDelete={() => void deleteProjectRow(x.id, x.contractName)} /></td></tr>)}</tbody></table></div>{pager(safeProjectPage, projectPages, projectRows.length, setProjectPage)}</section></div></section>)}
+        {view === "payments" && <section className="page tool-page"><div className="tool-layout">{(paymentLoadError || (paymentSaveError && !paymentEditModal)) && <div role="alert" style={{background:"#fee2e2",color:"#991b1b",padding:"14px 18px",borderRadius:"14px",fontSize:".93rem"}}>{paymentLoadError || paymentSaveError}</div>}<section className="panel metric-panel"><div className="metric-section"><div className="inline-stat-grid"><MetricChip label="Total DV" value={number.format(payments.length)} /><MetricChip label="Total amount" value={peso.format(stats.totalVoucherValue)} /><MetricChip label="Status alerts" value={number.format(stats.pendingPayments)} /></div></div></section><section className="panel form-panel"><div className="panel__header"><div><p className="panel__kicker">DV Payment Monitoring Tool</p><h3>Add new DV record</h3></div></div>{paymentAddRecordForm}</section><section className="panel table-panel">{toolbar("DV payment records", "Track voucher workflow progress with clear department status indicators.", paymentSearch, setPaymentSearch, paymentFilter, setPaymentFilter, PAYMENT_FILTERS, "Status", paymentExport)}<div className="table-wrap table-wrap--payments"><table><thead><tr><th>Title of the Project</th><th>Name and Address of Claimant</th><th>Voucher No.</th><th>Date</th><th>Amount</th><th>ITMG</th><th>GAD</th><th>CASH</th><th>Actions</th></tr></thead><tbody>{paymentsLoading ? <tr><td colSpan={9}>Loading DV payments…</td></tr> : pageSlice(paymentRows, safePaymentPage).map((x) => <tr key={x.id}><td>{x.title}</td><td>{x.claimantAddress}</td><td>{x.voucherNo}</td><td>{fmtDate(x.date)}</td><td>{peso.format(x.amount)}</td><td><DvDepartmentStatusCell label={x.ictssd} pendingSince={x.ictssdPendingSince} createdAt={x.createdAt} now={paymentStatusNow} /></td><td><DvDepartmentStatusCell label={x.gad} pendingSince={x.gadPendingSince} createdAt={x.createdAt} now={paymentStatusNow} /></td><td><DvDepartmentStatusCell label={x.cash} pendingSince={x.cashPendingSince} createdAt={x.createdAt} now={paymentStatusNow} /></td><td><ActionSet onView={() => open("DV Payment", x.voucherNo, [["Title of the Project", x.title], ["Name and Address of Claimant", x.claimantAddress], ["Voucher No.", x.voucherNo], ["Date", fmtDate(x.date)], ["Amount", peso.format(x.amount)], ["ITMG", x.ictssd], ["GAD", x.gad], ["CASH", x.cash]], { recordId: x.id, attachmentModule: "dv-payments", attachments: x.attachments || [] })} onEdit={() => { setPaymentEdit(x.id); setPaymentEditAttachmentDraft(blankAttachmentDraft); setPaymentEditForm({ title: x.title, claimantAddress: x.claimantAddress, voucherNo: x.voucherNo, amount: projectMoneyFromNumber(x.amount), date: x.date || "", ictssd: x.ictssd, gad: x.gad, cash: x.cash }); setPaymentSaveError(""); setDvTitleWarning(false); setDvClaimantWarning(false); setDvVoucherWarning({ nonNumeric: false, maxLength: false }); setDvAmountWarning({ invalidChars: false, maxDigits: false }); setPaymentEditModal(true); }} onDelete={async () => { await new Promise((resolve) => setConfirmModal({ title: x.voucherNo, onConfirm: resolve })); setConfirmModal(null); try { const res = await fetch(`/api/dv-payments/${x.id}`, { method: "DELETE" }); if (!res.ok && res.status !== 204) { const t = await res.text(); setPaymentSaveError(t || "Delete failed"); return; } setPayments((cur) => cur.filter((item) => item.id !== x.id)); } catch (err) { setPaymentSaveError(err instanceof Error ? err.message : String(err)); } }} /></td></tr>)}</tbody></table></div>{pager(safePaymentPage, paymentPages, paymentRows.length, setPaymentPage)}</section></div></section>}
 
         {view === "policies" && (
           <PolicyMonitoringView
@@ -2748,7 +2891,7 @@ function App() {
           />
         )}
 
-        {view === "outgoing" && <section className="page tool-page"><div className="tool-layout">{outgoingLoadError && <div role="alert" style={{background:"#fee2e2",color:"#991b1b",padding:"14px 18px",borderRadius:"14px",fontSize:".93rem"}}>{outgoingLoadError}</div>}<section className="panel metric-panel"><div className="metric-section"><div className="inline-stat-grid"><MetricChip label="Total outgoing" value={number.format(outgoing.length)} /><MetricChip label="Top route" value={outgoingBars[0]?.label || "None"} /><MetricChip label="Departments hit" value={number.format(outgoingBars.length)} /></div></div></section><section className="panel form-panel"><div className="panel__header"><div><p className="panel__kicker">ISSD Outgoing Monitoring Tool</p><h3>Add outgoing record</h3></div></div>{outgoingAddRecordForm}</section><section className="panel table-panel">{toolbar("Outgoing records", "Monitor subject routing and department distribution.", outgoingSearch, setOutgoingSearch, outgoingFilter, setOutgoingFilter, forDeptFilterOptions, "For", outgoingExport)}<div className="table-wrap table-wrap--outgoing"><table><thead><tr><th>Subject</th><th>Memo Number</th><th>Date</th><th>Thru</th><th>For</th><th>Actions</th></tr></thead><tbody>{outgoingLoading ? <tr><td colSpan={6}>Loading outgoing records…</td></tr> : pageSlice(outgoingRows, safeOutgoingPage).map((x) => <tr key={x.id}><td title={x.subject}>{x.subject}</td><td>{x.memoNo}</td><td>{fmtDate(x.date)}</td><td>{x.thru}</td><td>{x.forDept}</td><td><ActionSet onView={() => open("Outgoing", x.memoNo, [["Subject", x.subject], ["Date", fmtDate(x.date)], ["Thru", x.thru], ["For", x.forDept]])} onEdit={() => { setOutgoingEdit(x.id); setOutgoingEditForm({ subject: x.subject, memoNo: x.memoNo, date: x.date || "", thru: x.thru, forDept: x.forDept }); setOutgoingSaveError(""); setOutgoingSubjectWarning(false); setOutgoingMemoNoWarning({ invalidChars: false, maxLength: false }); setThruAddVisible(false); setThruAddDraft(""); setThruAddError(""); setForAddVisible(false); setForAddDraft(""); setForAddError(""); setOutgoingEditModal(true); }} onDelete={() => void deleteOutgoingRow(x.id, x.memoNo)} /></td></tr>)}</tbody></table></div>{pager(safeOutgoingPage, outgoingPages, outgoingRows.length, setOutgoingPage)}</section></div></section>}
+        {view === "outgoing" && <section className="page tool-page"><div className="tool-layout">{outgoingLoadError && <div role="alert" style={{background:"#fee2e2",color:"#991b1b",padding:"14px 18px",borderRadius:"14px",fontSize:".93rem"}}>{outgoingLoadError}</div>}<section className="panel metric-panel"><div className="metric-section"><div className="inline-stat-grid"><MetricChip label="Total outgoing" value={number.format(outgoing.length)} /><MetricChip label="Top route" value={outgoingBars[0]?.label || "None"} /><MetricChip label="Departments hit" value={number.format(outgoingBars.length)} /></div></div></section><section className="panel form-panel"><div className="panel__header"><div><p className="panel__kicker">ISSD Outgoing Monitoring Tool</p><h3>Add outgoing record</h3></div></div>{outgoingAddRecordForm}</section><section className="panel table-panel">{toolbar("Outgoing records", "Monitor subject routing and department distribution.", outgoingSearch, setOutgoingSearch, outgoingFilter, setOutgoingFilter, forDeptFilterOptions, "For", outgoingExport)}<div className="table-wrap table-wrap--outgoing"><table><thead><tr><th>Subject</th><th>Memo Number</th><th>Date</th><th>Thru</th><th>For</th><th>Actions</th></tr></thead><tbody>{outgoingLoading ? <tr><td colSpan={6}>Loading outgoing records…</td></tr> : pageSlice(outgoingRows, safeOutgoingPage).map((x) => <tr key={x.id}><td title={x.subject}>{x.subject}</td><td>{x.memoNo}</td><td>{fmtDate(x.date)}</td><td>{x.thru}</td><td>{x.forDept}</td><td><ActionSet onView={() => open("Outgoing", x.memoNo, [["Subject", x.subject], ["Date", fmtDate(x.date)], ["Thru", x.thru], ["For", x.forDept]], { recordId: x.id, attachmentModule: "outgoing", attachments: x.attachments || [] })} onEdit={() => { setOutgoingEdit(x.id); setOutgoingEditAttachmentDraft(blankAttachmentDraft); setOutgoingEditForm({ subject: x.subject, memoNo: x.memoNo, date: x.date || "", thru: x.thru, forDept: x.forDept }); setOutgoingSaveError(""); setOutgoingSubjectWarning(false); setOutgoingMemoNoWarning({ invalidChars: false, maxLength: false }); setThruAddVisible(false); setThruAddDraft(""); setThruAddError(""); setForAddVisible(false); setForAddDraft(""); setForAddError(""); setOutgoingEditModal(true); }} onDelete={() => void deleteOutgoingRow(x.id, x.memoNo)} /></td></tr>)}</tbody></table></div>{pager(safeOutgoingPage, outgoingPages, outgoingRows.length, setOutgoingPage)}</section></div></section>}
 
         {view === "reports" && (
           <section className="page reports-page">
@@ -2800,7 +2943,10 @@ function App() {
                   <InsightListCard title="Project Highlights" items={[
                     `${number.format(stats.totalProjects)} total projects are currently monitored.`,
                     `${number.format(stats.pendingProjects)} projects still carry outstanding balances.`,
-                    `Highest contract value is ${projects[0] ? peso.format(Math.max(...projects.map((item) => item.amount))) : peso.format(0)}.`,
+                    `Highest contract value is ${projects[0] ? peso.format(Math.max(...projects.map((item) => projectAmount(item)))) : peso.format(0)}.`,
+                    ...(stats.invalidOutstandingProjects > 0
+                      ? [`${number.format(stats.invalidOutstandingProjects)} project(s) exceed their contract amount in stored outstanding values; ratio uses capped totals.`]
+                      : []),
                   ]} />
                 </div>
               </section>
@@ -2813,7 +2959,7 @@ function App() {
                   </div>
                 </div>
                 <div className="analytics-three-column">
-                  <DonutAnalyticsCard title="ICTSSD Statuses" data={dvStatusCharts.ictssd} />
+                  <DonutAnalyticsCard title="ITMG Statuses" data={dvStatusCharts.ictssd} />
                   <DonutAnalyticsCard title="GAD Statuses" data={dvStatusCharts.gad} />
                   <DonutAnalyticsCard title="CASH Statuses" data={dvStatusCharts.cash} />
                 </div>
@@ -2894,6 +3040,14 @@ function App() {
               <label><span>End Date</span><input type="text" readOnly tabIndex={-1} className="form-field-computed" value={editEndDateYmd ? fmtDate(editEndDateYmd) : ""} placeholder="Set start date and duration" title="Computed from start date plus duration. Use days, weeks, months, or years (e.g. 90 days, 8 wks, 3 mo, 2 years). A plain number defaults to days." /><div className="form-field-warning-slot" /></label>
               <div className="form-label-with-action"><div className="form-label-with-action__row"><label className="form-label-with-action__text" htmlFor="edit-goods-select"><span>Kind of Goods</span></label>{goodsAddVisible ? (<button type="button" className="goods-cancel-btn" aria-label="Cancel" onClick={() => { setGoodsAddVisible(false); setGoodsAddDraft(""); setGoodsAddError(""); }}><span className="goods-btn__icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="4" y1="4" x2="12" y2="12"/><line x1="12" y1="4" x2="4" y2="12"/></svg></span><span className="goods-btn__label">Cancel</span></button>) : (<button type="button" className="goods-add-btn" aria-label="Add goods" onClick={() => { setGoodsAddError(""); setGoodsAddDraft(""); setGoodsAddVisible(true); }}><span className="goods-btn__icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="8" y1="2" x2="8" y2="14"/><line x1="2" y1="8" x2="14" y2="8"/></svg></span><span className="goods-btn__label">Add Goods</span></button>)}</div>{goodsAddVisible ? (<div className="form-inline-add-goods"><input type="text" value={goodsAddDraft} onChange={(e) => { setGoodsAddDraft(e.target.value); setGoodsAddError(""); }} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addGoodsCommit(); } }} placeholder="e.g. Vehicles" aria-label="New kind of goods" /><button type="button" className="ghost-button ghost-button--compact" onClick={addGoodsCommit}>Add</button></div>) : null}{goodsAddError ? (<p className="form-field-warning form-field-warning--tight" role="alert">{goodsAddError}</p>) : null}{(goodsRenameVisible || goodsAddVisible) ? (<select id="edit-goods-select" className="form-goods-select form-goods-select--visual-hide" value={editForm.goods} onChange={(e) => { setEditForm({ ...editForm, goods: e.target.value }); setGoodsRenameError(""); setGoodsSelectError(""); }} tabIndex={-1} aria-label="Current kind of goods">{goodsOptions.map((g) => <option key={g}>{g}</option>)}</select>) : (<div className="form-goods-select-row"><select id="edit-goods-select" className="form-goods-select" value={editForm.goods} onChange={(e) => { setEditForm({ ...editForm, goods: e.target.value }); setGoodsRenameError(""); setGoodsSelectError(""); }}>{goodsOptions.map((g) => <option key={g}>{g}</option>)}</select><button type="button" className="form-goods-select__icon-btn" aria-label="Rename kind of goods" title="Renames this kind and updates every project that uses it in the database" onClick={() => { setGoodsSelectError(""); setGoodsRenameError(""); setGoodsRenameDraft(editForm.goods); setGoodsRenameVisible(true); }}><GoodsEditIcon /></button><button type="button" className="form-goods-select__icon-btn form-goods-select__icon-btn--danger" aria-label="Remove or hide kind from list" title="Hides a built-in kind from the list, or removes a kind you added with Add Goods." disabled={!BASE_GOODS.includes(editForm.goods) && !extraGoods.some((x) => x === editForm.goods)} onClick={() => void deleteGoodsKind()}><GoodsTrashIcon /></button></div>)}{goodsRenameVisible ? (<div className="form-inline-add-goods form-inline-add-goods--rename"><input type="text" value={goodsRenameDraft} onChange={(e) => { setGoodsRenameDraft(e.target.value); setGoodsRenameError(""); }} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void renameGoodsCommit(); } }} placeholder="New name" aria-label="Rename kind of goods" /><button type="button" className="ghost-button ghost-button--compact" onClick={() => void renameGoodsCommit()}>Save</button><button type="button" className="ghost-button ghost-button--compact" onClick={() => { setGoodsRenameVisible(false); setGoodsRenameError(""); }}>Cancel</button></div>) : null}{(goodsRenameError || goodsSelectError) ? (<p className="form-field-warning form-field-warning--tight" role="alert">{goodsRenameError || goodsSelectError}</p>) : null}</div>
               <div className="form-row form-row--money-warnings"><label><span>Amount of Contract</span><input type="text" inputMode="decimal" autoComplete="off" value={editForm.amount} onChange={(e) => { const st = projectMoneyParseState(e.target.value); setEditForm({ ...editForm, amount: st.display }); setEditMoneyWarnings((w) => ({ ...w, amount: { invalidChars: st.hadInvalidChars, maxDigits: st.digitLimitExceeded } })); }} placeholder="0.00" aria-invalid={editMoneyWarnings.amount.invalidChars || editMoneyWarnings.amount.maxDigits} /><div className="form-field-warning-slot">{(editMoneyWarnings.amount.invalidChars || editMoneyWarnings.amount.maxDigits) ? (<p className="form-field-warning" role="alert">{editMoneyWarnings.amount.invalidChars ? "Only numbers, commas, and periods are allowed. " : null}{editMoneyWarnings.amount.maxDigits ? `At most ${MAX_PROJECT_MONEY_INT_DIGITS} integer digits and ${MAX_PROJECT_MONEY_FRAC_DIGITS} decimal places are allowed.` : null}</p>) : null}</div></label><label><span>Outstanding Value</span><input type="text" inputMode="decimal" autoComplete="off" value={editForm.outstanding} onChange={(e) => { const st = projectMoneyParseState(e.target.value); setEditForm({ ...editForm, outstanding: st.display }); setEditMoneyWarnings((w) => ({ ...w, outstanding: { invalidChars: st.hadInvalidChars, maxDigits: st.digitLimitExceeded } })); }} placeholder="0.00" aria-invalid={editMoneyWarnings.outstanding.invalidChars || editMoneyWarnings.outstanding.maxDigits} /><div className="form-field-warning-slot">{(editMoneyWarnings.outstanding.invalidChars || editMoneyWarnings.outstanding.maxDigits) ? (<p className="form-field-warning" role="alert">{editMoneyWarnings.outstanding.invalidChars ? "Only numbers, commas, and periods are allowed. " : null}{editMoneyWarnings.outstanding.maxDigits ? `At most ${MAX_PROJECT_MONEY_INT_DIGITS} integer digits and ${MAX_PROJECT_MONEY_FRAC_DIGITS} decimal places are allowed.` : null}</p>) : null}</div></label></div>
+              <AttachmentField
+                module="projects"
+                recordId={projectEdit}
+                existingAttachments={projects.find((p) => p.id === projectEdit)?.attachments || []}
+                draft={editAttachmentDraft}
+                onDraftChange={setEditAttachmentDraft}
+                disabled={projectSaving}
+              />
               <div className="form-actions">
                 <button type="submit" className="primary-button" disabled={projectSaving}>{projectSaving ? "Saving…" : "Save changes"}</button>
                 <button type="button" className="ghost-button" onClick={closeEditModal}>Cancel</button>
@@ -3001,8 +3155,8 @@ function App() {
               </div>
               <div className="form-row form-row--triple">
                 <label>
-                  <span>ICTSSD (Department)</span>
-                  <select value={paymentEditForm.ictssd} onChange={(e) => setPaymentEditForm({ ...paymentEditForm, ictssd: e.target.value })}>{ICTSSD.map((o) => <option key={o}>{o}</option>)}</select>
+                  <span>ITMG (Department)</span>
+                  <select value={paymentEditForm.ictssd} onChange={(e) => setPaymentEditForm({ ...paymentEditForm, ictssd: e.target.value })}>{ITMG.map((o) => <option key={o}>{o}</option>)}</select>
                   <div className="form-field-warning-slot" />
                 </label>
                 <label>
@@ -3016,6 +3170,14 @@ function App() {
                   <div className="form-field-warning-slot" />
                 </label>
               </div>
+              <AttachmentField
+                module="dv-payments"
+                recordId={paymentEdit}
+                existingAttachments={payments.find((p) => p.id === paymentEdit)?.attachments || []}
+                draft={paymentEditAttachmentDraft}
+                onDraftChange={setPaymentEditAttachmentDraft}
+                disabled={paymentSaving}
+              />
               <div className="form-actions">
                 <button type="submit" className="primary-button" disabled={paymentSaving}>{paymentSaving ? "Saving…" : "Save changes"}</button>
                 <button type="button" className="ghost-button" onClick={closePaymentEditModal}>Cancel</button>
@@ -3043,6 +3205,14 @@ function App() {
                 <label><span>Date</span><input type="date" title="Choose a date using the calendar" value={outgoingEditForm.date} onKeyDown={blockDateFieldDirectEntry} onPaste={(e) => e.preventDefault()} onCut={(e) => e.preventDefault()} onChange={(e) => setOutgoingEditForm({ ...outgoingEditForm, date: e.target.value })} /></label>
               </div>
               {outgoingEditDeptPickers}
+              <AttachmentField
+                module="outgoing"
+                recordId={outgoingEdit}
+                existingAttachments={outgoing.find((p) => p.id === outgoingEdit)?.attachments || []}
+                draft={outgoingEditAttachmentDraft}
+                onDraftChange={setOutgoingEditAttachmentDraft}
+                disabled={outgoingSaving}
+              />
               <div className="form-actions">
                 <button type="submit" className="primary-button" disabled={outgoingSaving}>{outgoingSaving ? "Saving…" : "Save changes"}</button>
                 <button type="button" className="ghost-button" onClick={closeOutgoingEditModal}>Cancel</button>
@@ -3155,7 +3325,7 @@ function App() {
           </div>
         </div>
       )}
-      {modal && <div className="modal-backdrop" onClick={() => setModal(null)}><div className={`modal-card workspace-modal ${modal.type === "Project" ? "workspace-modal--project" : ""}${modal.type === "Outgoing" ? " workspace-modal--outgoing" : ""}${modal.type === "DV Payment" ? " workspace-modal--dv-payment" : ""}${modal.type === "Policy" ? " workspace-modal--policy" : ""}`} onClick={(e) => e.stopPropagation()}><div className="workspace-modal__header"><div><p className="workspace-modal__eyebrow">{modal.type.toUpperCase()} DETAILS</p><h3>{modal.title}</h3></div><button type="button" className="workspace-modal__close" aria-label="Close details" onClick={() => setModal(null)}><CloseIcon /></button></div><div className="workspace-modal__body">{modal.type === "Project" ? <div className="project-detail-grid">{buildProjectDetailFields(modal).map((field) => <article key={field.label} className="project-detail-field"><span className="project-detail-label">{field.label}</span><strong className={`project-detail-value ${field.tone === "amount" ? "project-detail-value--amount" : ""} ${field.tone === "danger" ? "project-detail-value--danger" : ""}`}>{field.value}</strong></article>)}</div> : buildDetailSections(modal).map((section) => <section key={section.key || section.title || section.fields[0]?.label} className={`detail-section${section.compact ? " detail-section--compact" : ""}`}>{section.title && !section.hideTitle ? <div className="detail-section__header"><p className="detail-section__title">{section.title}</p></div> : null}<div className={`detail-grid detail-grid--${section.columns}${section.columns === 1 ? " detail-grid--field-wide" : ""}`}>{section.fields.map((field) => <article key={field.label} className={`detail-item detail-item--${field.tone}`}><div className="detail-item__header"><span className="detail-item__icon"><DetailFieldIcon name={field.icon} /></span><span className="detail-item__label">{field.label}</span></div><strong className="detail-item__value">{field.value}</strong></article>)}</div></section>)}</div></div></div>}
+      {modal && <div className="modal-backdrop" onClick={() => setModal(null)}><div className={`modal-card workspace-modal ${modal.type === "Project" ? "workspace-modal--project" : ""}${modal.type === "Outgoing" ? " workspace-modal--outgoing" : ""}${modal.type === "DV Payment" ? " workspace-modal--dv-payment" : ""}${modal.type === "Policy" ? " workspace-modal--policy" : ""}`} onClick={(e) => e.stopPropagation()}><div className="workspace-modal__header"><div><p className="workspace-modal__eyebrow">{modal.type.toUpperCase()} DETAILS</p><h3>{modal.title}</h3></div><button type="button" className="workspace-modal__close" aria-label="Close details" onClick={() => setModal(null)}><CloseIcon /></button></div><div className="workspace-modal__body">{modal.type === "Project" ? (<><div className="project-detail-grid">{buildProjectDetailFields(modal).map((field) => <article key={field.label} className="project-detail-field"><span className="project-detail-label">{field.label}</span><strong className={`project-detail-value ${field.tone === "amount" ? "project-detail-value--amount" : ""} ${field.tone === "danger" ? "project-detail-value--danger" : ""}`}>{field.value}</strong></article>)}</div><AttachmentDetailPreview module={modal.attachmentModule} recordId={modal.recordId} attachments={modal.attachments || []} /></>) : (<>{buildDetailSections(modal).map((section) => <section key={section.key || section.title || section.fields[0]?.label} className={`detail-section${section.compact ? " detail-section--compact" : ""}`}>{section.title && !section.hideTitle ? <div className="detail-section__header"><p className="detail-section__title">{section.title}</p></div> : null}<div className={`detail-grid detail-grid--${section.columns}${section.columns === 1 ? " detail-grid--field-wide" : ""}`}>{section.fields.map((field) => <article key={field.label} className={`detail-item detail-item--${field.tone}`}><div className="detail-item__header"><span className="detail-item__icon"><DetailFieldIcon name={field.icon} /></span><span className="detail-item__label">{field.label}</span></div><strong className="detail-item__value">{field.value}</strong></article>)}</div></section>)}<AttachmentDetailPreview module={modal.attachmentModule} recordId={modal.recordId} attachments={modal.attachments || []} /></>)}</div></div></div>}
     </div>
   );
 }
@@ -3167,6 +3337,17 @@ function MetricChip({ label, value }) {
       <span>{label}</span>
       <strong title={valueText}>{value}</strong>
     </article>
+  );
+}
+function DvDepartmentStatusCell({ label, pendingSince, createdAt, now }) {
+  const isPending = label === "Pending";
+  const since = pendingSince || (isPending ? createdAt : null);
+  const elapsed = isPending && since ? formatPendingElapsed(since, now) : "";
+  return (
+    <div className="dv-status-cell">
+      <StatusBadge label={label} />
+      {elapsed ? <span className="dv-status-cell__elapsed">{elapsed}</span> : null}
+    </div>
   );
 }
 function StatusBadge({ label }) { return <span className={`status-badge ${statusTone(label)}`}>{label}</span>; }
@@ -3350,6 +3531,7 @@ function AnalyticsCountPill({ label, value, delay }) {
 }
 
 function ProgressAnalyticsCard({ label, value, detail, progress }) {
+  const progressClamped = Math.min(100, Math.max(0, Number.isFinite(Number(progress)) ? Number(progress) : 0));
   return (
     <section className="analytics-block analytics-block--compact">
       <div className="analytics-block__header">
@@ -3357,7 +3539,7 @@ function ProgressAnalyticsCard({ label, value, detail, progress }) {
         <p>{detail}</p>
       </div>
       <div className="progress-card">
-        <div className="progress-card__ring" style={{ background: `conic-gradient(#1f6aa5 0% ${progress}%, rgba(15, 76, 129, 0.12) ${progress}% 100%)` }}>
+        <div className="progress-card__ring" style={{ background: `conic-gradient(#1f6aa5 0% ${progressClamped}%, rgba(15, 76, 129, 0.12) ${progressClamped}% 100%)` }}>
           <div className="progress-card__ring-inner">
             <strong>{value}</strong>
             <span>Outstanding</span>
@@ -3477,7 +3659,7 @@ function buildDetailSections(modal) {
         compact: true,
         columns: 3,
         fields: [
-          detailField("ICTSSD", byLabel["ICTSSD"]),
+          detailField("ITMG", byLabel["ITMG"]),
           detailField("GAD", byLabel["GAD"]),
           detailField("CASH", byLabel["CASH"]),
         ],
@@ -3594,7 +3776,7 @@ function iconForField(label) {
     "Title of the Project": "file",
     "Name and Address of Claimant": "user",
     "Voucher No.": "hash",
-    ICTSSD: "building",
+    ITMG: "building",
     GAD: "building",
     CASH: "building",
     Subject: "file",

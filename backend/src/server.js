@@ -2,6 +2,7 @@ import { app } from "./app.js";
 import { env } from "./config/env.js";
 import { ensureMonitoringProjectsTable } from "./db/ensureMonitoringSchema.js";
 import { closeOraclePool, initOraclePool } from "./db/oraclePool.js";
+import { ensureUploadDirs } from "./services/attachmentsService.js";
 
 async function start() {
   try {
@@ -9,6 +10,7 @@ async function start() {
     if (env.oracle.enabled) {
       await ensureMonitoringProjectsTable();
     }
+    await ensureUploadDirs();
   } catch (err) {
     console.error("Oracle: startup failed", err);
     if (env.oracle.enabled) {

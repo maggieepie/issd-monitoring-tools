@@ -72,3 +72,57 @@ export function formatPolicyDuration(totalDays) {
 
   return parts.join(", ");
 }
+
+/** Elapsed time since a pending timestamp (minutes → hours → days → weeks → months/years). */
+export function formatPendingElapsed(isoTimestamp, nowMs = Date.now()) {
+  if (!isoTimestamp) return "";
+  const start = new Date(isoTimestamp).getTime();
+  if (Number.isNaN(start)) return "";
+
+  const totalMinutes = Math.max(0, Math.floor((nowMs - start) / 60000));
+  const totalHours = Math.floor(totalMinutes / 60);
+  const totalDays = Math.floor(totalHours / 24);
+  const totalWeeks = Math.floor(totalDays / 7);
+
+  const label = (value, unit) => `${value} ${unit}${value === 1 ? "" : "s"}`;
+
+  if (totalMinutes < 60) {
+    return label(totalMinutes, "min");
+  }
+  if (totalHours < 24) {
+    const mins = totalMinutes % 60;
+    const parts = [label(totalHours, "hr")];
+    if (mins > 0) parts.push(label(mins, "min"));
+    return parts.join(", ");
+  }
+  if (totalDays < 7) {
+    const hrs = totalHours % 24;
+    const parts = [label(totalDays, "day")];
+    if (hrs > 0) parts.push(label(hrs, "hr"));
+    return parts.join(", ");
+  }
+  if (totalWeeks < 52) {
+    const days = totalDays % 7;
+    const parts = [label(totalWeeks, "week")];
+    if (days > 0) parts.push(label(days, "day"));
+    return parts.join(", ");
+  }
+
+  let remainingDays = totalDays;
+  const years = Math.floor(remainingDays / 365);
+  remainingDays %= 365;
+  const months = Math.floor(remainingDays / 30);
+  remainingDays %= 30;
+  const weeks = Math.floor(remainingDays / 7);
+  const days = remainingDays % 7;
+
+  const parts = [];
+  const push = (value, unit) => {
+    if (value > 0) parts.push(label(value, unit));
+  };
+  push(years, "year");
+  push(months, "month");
+  push(weeks, "week");
+  push(days, "day");
+  return parts.join(", ");
+}

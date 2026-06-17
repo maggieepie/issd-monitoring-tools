@@ -1,5 +1,6 @@
 import { env } from "../config/env.js";
 import * as projectsRepo from "../repositories/projectsRepository.js";
+import { enrichRecordWithAttachments, enrichRecordsWithAttachments, removeAllAttachments } from "../services/attachmentsService.js";
 
 function oracleHelpMessage(message) {
   if (String(message).includes("ORA-00942")) {
@@ -29,6 +30,11 @@ function parseProjectBody(body) {
     err.status = 400;
     throw err;
   }
+  if (outstanding > amount) {
+    const err = new Error("outstanding cannot exceed amount.");
+    err.status = 400;
+    throw err;
+  }
 
   return { contractName, date, duration, goods, amount, outstanding };
 }
@@ -42,7 +48,7 @@ async function list(req, res, next) {
       });
     }
     const rows = await projectsRepo.listProjects();
-    res.json(rows);
+    res.json(await enrichRecordsWithAttachments("projects", rows));
   } catch (err) {
     err.message = oracleHelpMessage(err.message);
     next(err);
@@ -59,7 +65,7 @@ async function create(req, res, next) {
     }
     const payload = parseProjectBody(req.body);
     const row = await projectsRepo.createProject(payload);
-    res.status(201).json(row);
+    res.status(201).json(await enrichRecordWithAttachments("projects", row));
   } catch (err) {
     err.message = oracleHelpMessage(err.message);
     next(err);
@@ -80,7 +86,7 @@ async function update(req, res, next) {
     }
     const payload = parseProjectBody(req.body);
     const row = await projectsRepo.updateProject(id, payload);
-    res.json(row);
+    res.json(await enrichRecordWithAttachments("projects", row));
   } catch (err) {
     err.message = oracleHelpMessage(err.message);
     next(err);
@@ -99,6 +105,7 @@ async function remove(req, res, next) {
     if (!Number.isFinite(id)) {
       return res.status(400).json({ message: "Invalid project id." });
     }
+    await removeAllAttachments("projects", id).catch(() => undefined);
     await projectsRepo.deleteProject(id);
     res.status(204).send();
   } catch (err) {

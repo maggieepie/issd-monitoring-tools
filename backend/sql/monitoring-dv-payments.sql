@@ -13,9 +13,10 @@
 --   VOUCHER_NO       — Disbursement Voucher number
 --   VOUCHER_DATE     — Date of the voucher
 --   AMOUNT           — Total voucher amount
---   ICTSSD           — ICTSSD status  (e.g. Pending / Received)
---   GAD              — GAD status     (e.g. Pending / Received)
---   CASH             — Cash status    (e.g. Pending / Received)
+--   ICTSSD           — ITMG department status  (e.g. Pending / Signed)
+--   GAD              — GAD status     (e.g. Pending / Signed)
+--   CASH             — Cash status    (e.g. Pending / Signed)
+--   *_PENDING_SINCE  — When each department status entered Pending (for elapsed tracking)
 
 SET DEFINE OFF;
 
@@ -35,6 +36,9 @@ BEGIN
       ICTSSD           VARCHAR2(100)   DEFAULT 'Pending' NOT NULL,
       GAD              VARCHAR2(100)   DEFAULT 'Pending' NOT NULL,
       CASH             VARCHAR2(100)   DEFAULT 'Pending' NOT NULL,
+      ICTSSD_PENDING_SINCE TIMESTAMP,
+      GAD_PENDING_SINCE    TIMESTAMP,
+      CASH_PENDING_SINCE   TIMESTAMP,
       IS_DELETED       NUMBER(1)       DEFAULT 0 NOT NULL,
       CREATED_AT       TIMESTAMP       DEFAULT SYSTIMESTAMP NOT NULL,
       UPDATED_AT       TIMESTAMP       DEFAULT SYSTIMESTAMP NOT NULL
@@ -75,5 +79,44 @@ BEGIN
     EXECUTE IMMEDIATE
       q'[ALTER TABLE MONITORING_DV_PAYMENTS ADD (IS_DELETED NUMBER(1) DEFAULT 0 NOT NULL)]';
   END IF;
+
+  SELECT COUNT(*) INTO c FROM user_tab_columns
+   WHERE table_name = 'MONITORING_DV_PAYMENTS' AND column_name = 'ICTSSD_PENDING_SINCE';
+  IF c = 0 THEN
+    EXECUTE IMMEDIATE
+      q'[ALTER TABLE MONITORING_DV_PAYMENTS ADD (ICTSSD_PENDING_SINCE TIMESTAMP)]';
+  END IF;
+
+  SELECT COUNT(*) INTO c FROM user_tab_columns
+   WHERE table_name = 'MONITORING_DV_PAYMENTS' AND column_name = 'GAD_PENDING_SINCE';
+  IF c = 0 THEN
+    EXECUTE IMMEDIATE
+      q'[ALTER TABLE MONITORING_DV_PAYMENTS ADD (GAD_PENDING_SINCE TIMESTAMP)]';
+  END IF;
+
+  SELECT COUNT(*) INTO c FROM user_tab_columns
+   WHERE table_name = 'MONITORING_DV_PAYMENTS' AND column_name = 'CASH_PENDING_SINCE';
+  IF c = 0 THEN
+    EXECUTE IMMEDIATE
+      q'[ALTER TABLE MONITORING_DV_PAYMENTS ADD (CASH_PENDING_SINCE TIMESTAMP)]';
+  END IF;
 END;
 /
+
+UPDATE MONITORING_DV_PAYMENTS
+   SET ICTSSD_PENDING_SINCE = CREATED_AT
+ WHERE ICTSSD = 'Pending'
+   AND ICTSSD_PENDING_SINCE IS NULL
+   AND (IS_DELETED = 0 OR IS_DELETED IS NULL);
+
+UPDATE MONITORING_DV_PAYMENTS
+   SET GAD_PENDING_SINCE = CREATED_AT
+ WHERE GAD = 'Pending'
+   AND GAD_PENDING_SINCE IS NULL
+   AND (IS_DELETED = 0 OR IS_DELETED IS NULL);
+
+UPDATE MONITORING_DV_PAYMENTS
+   SET CASH_PENDING_SINCE = CREATED_AT
+ WHERE CASH = 'Pending'
+   AND CASH_PENDING_SINCE IS NULL
+   AND (IS_DELETED = 0 OR IS_DELETED IS NULL);

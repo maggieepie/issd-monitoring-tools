@@ -1031,6 +1031,78 @@ a { color: inherit; }
   align-items: start;
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
+.attachment-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.attachment-field__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.attachment-field__clear {
+  min-height: 38px;
+}
+.attachment-field__hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+.attachment-field__selected-name {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.9rem;
+}
+.attachment-field__file-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.attachment-field__file-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+.attachment-field__preview-grid,
+.attachment-detail-preview__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 10px;
+}
+.attachment-field__preview-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.attachment-field__preview,
+.attachment-field__preview-item img,
+.attachment-detail-preview img {
+  max-width: 220px;
+  max-height: 160px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  object-fit: cover;
+  background: rgba(15, 76, 129, 0.04);
+}
+.attachment-detail-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+.attachment-detail-preview__label {
+  color: var(--muted);
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
 .form-actions, .toolbar, .action-set, .modal-card__header { display: flex; gap: 10px; }
 .form-actions { justify-content: space-between; align-items: center; }
 .pagination {
@@ -1135,7 +1207,9 @@ a { color: inherit; }
 .table-wrap--payments th:nth-child(7),
 .table-wrap--payments td:nth-child(7),
 .table-wrap--payments th:nth-child(8),
-.table-wrap--payments td:nth-child(8) { min-width: 7.25rem; }
+.table-wrap--payments td:nth-child(8) { min-width: 8.5rem; }
+.dv-status-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.dv-status-cell__elapsed { font-size: .72rem; font-weight: 600; color: var(--warning); line-height: 1.2; white-space: nowrap; }
 .table-wrap--outgoing table {
   width: 100%;
   min-width: 720px;

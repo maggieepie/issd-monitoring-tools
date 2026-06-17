@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
+import AttachmentField from "./AttachmentField.jsx";
+import { applyAttachmentMeta, blankAttachmentDraft, normalizeAttachments, syncRecordAttachments } from "./attachmentApi.js";
 import {
   PAGE,
   blockDateFieldDirectEntry,
@@ -88,6 +90,18 @@ function policyStatusTone(v) {
   return "warning";
 }
 
+function normalizePolicyRow(row) {
+  return normalizeAttachments(row);
+}
+
+async function attachAfterSave(module, recordId, draft) {
+  if (!draft?.newFiles?.length && !draft?.removedAttachmentIds?.length) return null;
+  return syncRecordAttachments(module, recordId, {
+    newFiles: draft.newFiles || [],
+    removedAttachmentIds: draft.removedAttachmentIds || [],
+  });
+}
+
 function CloseIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -121,6 +135,8 @@ export default function PolicyMonitoringView({ setModal, setConfirmModal, showRe
   const [policyEditRemarksWarning, setPolicyEditRemarksWarning] = useState(false);
   const [policyRequiredWarnings, setPolicyRequiredWarnings] = useState(blankPolicyRequiredWarnings);
   const [policyEditRequiredWarnings, setPolicyEditRequiredWarnings] = useState(blankPolicyRequiredWarnings);
+  const [policyAttachmentDraft, setPolicyAttachmentDraft] = useState(blankAttachmentDraft);
+  const [policyEditAttachmentDraft, setPolicyEditAttachmentDraft] = useState(blankAttachmentDraft);
 
   const formDays = useMemo(
     () => policyDaysBetween(policyForm.startDate, policyForm.endDate),
@@ -146,7 +162,7 @@ export default function PolicyMonitoringView({ setModal, setConfirmModal, showRe
           data = null;
         }
         if (!res.ok) throw new Error((data && data.message) || raw || "Failed to load policy records");
-        if (!cancelled) setPolicies(Array.isArray(data) ? data : []);
+        if (!cancelled) setPolicies(Array.isArray(data) ? data.map(normalizePolicyRow) : []);
       } catch (e) {
         if (!cancelled) {
           setPolicyLoadError(e instanceof Error ? e.message : String(e));
@@ -187,6 +203,7 @@ export default function PolicyMonitoringView({ setModal, setConfirmModal, showRe
     setPolicyEditRemarksWarning(false);
     setPolicyEditRequiredWarnings(blankPolicyRequiredWarnings);
     setPolicySaveError("");
+    setPolicyEditAttachmentDraft(blankAttachmentDraft);
   };
 
   const buildPolicyBody = (form, computedDays) => {
@@ -277,8 +294,16 @@ export default function PolicyMonitoringView({ setModal, setConfirmModal, showRe
         data = null;
       }
       if (!res.ok) throw new Error((data && data.message) || raw || "Save failed");
-      setPolicies((cur) => [data, ...cur]);
+      let saved = normalizePolicyRow(data);
+      try {
+        const attachmentResult = await attachAfterSave("policies", saved.id, policyAttachmentDraft);
+        saved = applyAttachmentMeta(saved, attachmentResult, policyAttachmentDraft);
+      } catch (attachErr) {
+        setPolicySaveError(`Record saved but attachment failed: ${attachErr instanceof Error ? attachErr.message : String(attachErr)}`);
+      }
+      setPolicies((cur) => [saved, ...cur]);
       setPolicyForm(blankPolicy);
+      setPolicyAttachmentDraft(blankAttachmentDraft);
       setPolicyTxWarning(blankTransactionCodeWarning);
       setPolicyTitleWarning(false);
       setPolicyCreatedByWarning(blankCreatedByWarning);
@@ -324,7 +349,16 @@ export default function PolicyMonitoringView({ setModal, setConfirmModal, showRe
         data = null;
       }
       if (!res.ok) throw new Error((data && data.message) || raw || "Save failed");
-      setPolicies((cur) => cur.map((x) => (x.id === policyEdit ? data : x)));
+      let saved = normalizePolicyRow(data);
+      const prior = policies.find((x) => x.id === policyEdit);
+      try {
+        const attachmentResult = await attachAfterSave("policies", saved.id, policyEditAttachmentDraft);
+        saved = applyAttachmentMeta(saved, attachmentResult, policyEditAttachmentDraft);
+      } catch (attachErr) {
+        setPolicySaveError(`Record saved but attachment failed: ${attachErr instanceof Error ? attachErr.message : String(attachErr)}`);
+      }
+      setPolicies((cur) => cur.map((x) => (x.id === policyEdit ? saved : x)));
+      setPolicyEditAttachmentDraft(blankAttachmentDraft);
       closePolicyEditModal();
     } catch (err) {
       setPolicySaveError(err instanceof Error ? err.message : String(err));
@@ -386,6 +420,9 @@ export default function PolicyMonitoringView({ setModal, setConfirmModal, showRe
     setModal({
       type: "Policy",
       title: x.transactionCode,
+      recordId: x.id,
+      attachmentModule: "policies",
+      attachments: x.attachments || [],
       rows: [
         ["Policy Title", x.policyTitle],
         ["Created By", x.createdBy],
@@ -400,6 +437,7 @@ export default function PolicyMonitoringView({ setModal, setConfirmModal, showRe
 
   const startPolicyEdit = (x) => {
     setPolicyEdit(x.id);
+    setPolicyEditAttachmentDraft(blankAttachmentDraft);
     setPolicyEditForm({
       transactionCode: x.transactionCode,
       policyTitle: x.policyTitle,
@@ -712,6 +750,12 @@ export default function PolicyMonitoringView({ setModal, setConfirmModal, showRe
               policyRequiredWarnings,
               setPolicyRequiredWarnings,
             )}
+            <AttachmentField
+              module="policies"
+              draft={policyAttachmentDraft}
+              onDraftChange={setPolicyAttachmentDraft}
+              disabled={policySaving}
+            />
             <div className="form-actions">
               <button type="submit" className="primary-button" disabled={policySaving}>
                 {policySaving ? "Adding…" : "Add policy"}
@@ -727,6 +771,7 @@ export default function PolicyMonitoringView({ setModal, setConfirmModal, showRe
                   setPolicyAssignedToWarning(blankAssignedToWarning);
                   setPolicyRemarksWarning(false);
                   setPolicyRequiredWarnings(blankPolicyRequiredWarnings);
+                  setPolicyAttachmentDraft(blankAttachmentDraft);
                   setPolicySaveError("");
                 }}
               >
@@ -831,6 +876,14 @@ export default function PolicyMonitoringView({ setModal, setConfirmModal, showRe
                 policyEditRequiredWarnings,
                 setPolicyEditRequiredWarnings,
               )}
+              <AttachmentField
+                module="policies"
+                recordId={policyEdit}
+                existingAttachments={policies.find((p) => p.id === policyEdit)?.attachments || []}
+                draft={policyEditAttachmentDraft}
+                onDraftChange={setPolicyEditAttachmentDraft}
+                disabled={policySaving}
+              />
               <div className="form-actions">
                 <button type="submit" className="primary-button" disabled={policySaving}>
                   {policySaving ? "Saving…" : "Save changes"}

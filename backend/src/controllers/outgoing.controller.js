@@ -1,5 +1,6 @@
 import { env } from "../config/env.js";
 import * as outgoingRepo from "../repositories/outgoingRepository.js";
+import { enrichRecordWithAttachments, enrichRecordsWithAttachments, removeAllAttachments } from "../services/attachmentsService.js";
 
 function oracleHelpMessage(message) {
   if (String(message).includes("ORA-00942")) {
@@ -38,7 +39,7 @@ async function list(req, res, next) {
   try {
     if (!env.oracle.enabled) return res.status(503).json(NOT_CONFIGURED);
     const rows = await outgoingRepo.listOutgoing();
-    res.json(rows);
+    res.json(await enrichRecordsWithAttachments("outgoing", rows));
   } catch (err) {
     err.message = oracleHelpMessage(err.message);
     next(err);
@@ -50,7 +51,7 @@ async function create(req, res, next) {
     if (!env.oracle.enabled) return res.status(503).json(NOT_CONFIGURED);
     const payload = parseOutgoingBody(req.body);
     const row = await outgoingRepo.createOutgoing(payload);
-    res.status(201).json(row);
+    res.status(201).json(await enrichRecordWithAttachments("outgoing", row));
   } catch (err) {
     err.message = oracleHelpMessage(err.message);
     next(err);
@@ -64,7 +65,7 @@ async function update(req, res, next) {
     if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid outgoing record id." });
     const payload = parseOutgoingBody(req.body);
     const row = await outgoingRepo.updateOutgoing(id, payload);
-    res.json(row);
+    res.json(await enrichRecordWithAttachments("outgoing", row));
   } catch (err) {
     err.message = oracleHelpMessage(err.message);
     next(err);
@@ -76,6 +77,7 @@ async function remove(req, res, next) {
     if (!env.oracle.enabled) return res.status(503).json(NOT_CONFIGURED);
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid outgoing record id." });
+    await removeAllAttachments("outgoing", id).catch(() => undefined);
     await outgoingRepo.deleteOutgoing(id);
     res.status(204).send();
   } catch (err) {
